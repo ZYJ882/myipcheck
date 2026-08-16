@@ -1,0 +1,14 @@
+# Android / Gradle build state
+android/.gradle/
+android/app/build/
+android/local.properties
+
+# Signing material — never commit private keys
+*.jks
+*.keystore
+*.p12
+
+# Local IDE state
+.idea/
+*.iml
+.DS_Store

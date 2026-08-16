@@ -12,8 +12,29 @@ android {
         applicationId = "ing.ipcheck.netscope"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = providers.gradleProperty("versionCode").orNull?.toIntOrNull() ?: 1
+        versionName = providers.gradleProperty("versionName").orNull ?: "1.0.0"
+    }
+
+    val releaseStorePath = providers.gradleProperty("signingStoreFile").orNull
+    signingConfigs {
+        create("release") {
+            if (releaseStorePath != null) {
+                storeFile = file(releaseStorePath)
+                storePassword = providers.gradleProperty("signingStorePassword").orNull
+                keyAlias = providers.gradleProperty("signingKeyAlias").orNull
+                keyPassword = providers.gradleProperty("signingKeyPassword").orNull
+            }
+        }
+    }
+
+    buildTypes {
+        getByName("release") {
+            if (releaseStorePath != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+            isMinifyEnabled = false
+        }
     }
 
     compileOptions {

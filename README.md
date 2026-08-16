@@ -77,6 +77,31 @@ cd android
 
 当前 debug APK 的包名为 `ing.ipcheck.netscope`，版本为 `1.0.0`，最低系统版本为 API 26，目标版本为 API 35。Lint 检查能够成功完成；其中保留了少量依赖版本更新建议，因为直接升级到最新依赖会要求更高版本的 Android Gradle Plugin 和 Compile SDK，与当前可复现的 Android API 35 构建环境不兼容。
 
+## 自动构建与发布
+
+仓库已经加入 `.github/workflows/android-release.yml`。以后只需把完整 Android 源码压缩包上传到 [`uploads/`](uploads/) 目录并提交到 `main` 分支，GitHub Actions 就会自动执行以下流程：选择最新源码压缩包、解压并规范化到 `android/`、构建 release APK、校验 APK 签名、递增 `versionCode` 和 `versionName`，最后创建一个新的 GitHub Release 并上传 APK。
+
+源码压缩包可以是 ZIP、TAR、TAR.GZ 或 TGZ。压缩包内部应包含完整 Gradle 工程，也就是能够看到 `settings.gradle.kts`、`build.gradle.kts` 和 `app/` 目录；允许外面再包一层文件夹。上传文件的详细约定见 [`uploads/README.md`](uploads/README.md)。也可以在 Actions 页面手动运行 `Build and Release Android APK`，并在 `archive_path` 中填写指定压缩包路径。
+
+### 一次性配置签名 Secrets
+
+为了让新版本覆盖当前已经上传的 `NetScope-debug.apk`，后续 release APK 必须使用同一份 Android 签名证书。当前 APK 的签名证书 SHA-256 指纹为 `A2:1E:DD:CD:75:53:D2:9F:85:2F:CA:FB:CE:C0:4C:E7:FC:41:B7:3E:26:81:B8:97:BC:A9`。该版本使用 Android debug keystore 构建，因此需要把**同一份 keystore 文件**保存为 GitHub Actions Secret，不能重新生成一份新的密钥。
+
+拥有仓库 Actions Secrets 写入权限的电脑上，可以执行以下命令。命令只会把密钥保存到 GitHub Secrets，不会把 keystore 提交进仓库：
+
+```bash
+base64 -w0 ~/.android/debug.keystore | gh secret set ANDROID_KEYSTORE_BASE64 --repo ZYJ882/myipcheck
+gh secret set ANDROID_KEYSTORE_PASSWORD --body android --repo ZYJ882/myipcheck
+gh secret set ANDROID_KEY_ALIAS --body androiddebugkey --repo ZYJ882/myipcheck
+gh secret set ANDROID_KEY_PASSWORD --body android --repo ZYJ882/myipcheck
+```
+
+如果当前电脑没有这份原始 debug keystore，不能通过新生成的密钥实现覆盖安装；此时必须先卸载旧 APK，或者找回旧 keystore 后再配置 Secrets。GitHub Actions 工作流本身已经准备好读取以上四个 Secrets，但出于安全原因，仓库不会保存签名私钥。
+
+### 版本与覆盖安装
+
+自动发布版本使用 `versionCode = 1000 + GitHub Actions run number`，版本名称采用 `1.0.<run number>`，因此每次成功构建都会高于之前的版本。只要 `applicationId` 保持为 `ing.ipcheck.netscope`、签名证书保持一致且 `versionCode` 递增，Android 就可以将新 APK 作为升级包覆盖安装，而不需要先卸载旧版本。
+
 ## 致谢与参考资料
 
 本项目的功能分类和信息架构参考了 MyIP 开源项目及 IPCheck.ing 官网，感谢原项目作者对网络诊断工具的开源贡献。
