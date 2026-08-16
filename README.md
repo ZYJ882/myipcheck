@@ -96,7 +96,7 @@ gh secret set ANDROID_KEY_ALIAS --body androiddebugkey --repo ZYJ882/myipcheck
 gh secret set ANDROID_KEY_PASSWORD --body android --repo ZYJ882/myipcheck
 ```
 
-如果当前电脑没有这份原始 debug keystore，不能通过新生成的密钥实现覆盖安装；此时必须先卸载旧 APK，或者找回旧 keystore 后再配置 Secrets。GitHub Actions 工作流本身已经准备好读取以上四个 Secrets，但出于安全原因，仓库不会保存签名私钥。
+如果当前电脑没有这份原始 debug keystore，不能通过新生成的密钥实现覆盖安装；此时必须先卸载旧 APK，或者找回旧 keystore 后再配置 Secrets。GitHub Actions 工作流本身已经准备好读取以上四个 Secrets，但出于安全原因，仓库不会保存签名私钥。新手可以直接按照 [`GitHub-Secrets-操作指南.md`](GitHub-Secrets-操作指南.md) 操作。
 
 ### 版本与覆盖安装
 
