@@ -1,6 +1,6 @@
 # MyIPCheck Android
 
-**MyIPCheck Android** 是一个基于 [MyIP](https://github.com/jason5ng32/MyIP) 公开功能架构实现的 Android 原生 IP 工具箱。项目将 IPCheck.ing 的核心信息层级和网络检测思路移植到 Android 手机端，使用 **Kotlin、Jetpack Compose 和 Material 3** 构建，重点提供公网 IP 查询、IP 地理信息、网络连通性检测、Android 隐私诊断和轻量网络延迟测量。
+**MyIPCheck Android** 是一个基于 [MyIP](https://github.com/jason5ng32/MyIP) 公开功能架构实现的 Android 原生 IP 工具箱。项目将 IPCheck.ing 的核心信息层级和网络检测思路移植到 Android 手机端，使用 **Kotlin、Jetpack Compose 和 Material 3** 构建，重点提供公网 IP 查询、IP 地理信息、网络连通性、Android 隐私诊断、DNS 解析、Whois 查询与服务端口状态检测。
 
 > 本项目是独立的第三方 Android 实现，不是 MyIP 或 IPCheck.ing 的官方客户端，也不代表原项目作者。项目在界面、应用名称、启动图标和客户端实现上均进行了独立处理。
 
@@ -14,11 +14,15 @@ MyIPCheck Android 采用适合移动端的单列卡片布局，将常用网络�
 | 网络连通性 | 检测 Google、GitHub、Cloudflare、ChatGPT、YouTube 和 Wikipedia，显示可达状态与延迟。 |
 | Android 隐私诊断 | 展示当前 VPN 状态、Private DNS 模式和系统 DNS 服务器。 |
 | 轻量网络测量 | 对 Cloudflare 执行一次轻量 HTTP 延迟测量，不自动进行大流量上传或下载。 |
-| 扩展工具 | 通过系统浏览器打开 IPCheck.ing 的全球延迟、DNS 解析、Whois、浏览器信息和服务状态工具。 |
+| 原生 DNS 解析 | 通过 Android 系统解析器直接查询域名的可用 IPv4 / IPv6 地址。 |
+| 原生 Whois | 通过公开 Whois 注册表查询域名或 IP 的注册信息，不在本地保留查询记录。 |
+| 原生服务状态 | 从当前网络探测常用 HTTPS 服务的 443 端口可达性和连接耗时。 |
+| 设备环境 | 展示 Android 版本、语言、应用标识等原生客户端环境信息。 |
+| 浏览器备用入口 | 仅在需要 WebRTC、JavaScript 指纹或真实多地区探针时，才打开 IPCheck.ing 的浏览器诊断页。 |
 
 ## 为什么采用 Android 原生实现
 
-MyIP 原项目和 IPCheck.ing 官网包含浏览器环境相关能力，例如 WebRTC 候选地址检测和 JavaScript 浏览器指纹。Android 原生应用并不具备完全等价的浏览器运行上下文，因此本项目不会伪造 WebRTC 泄漏或浏览器指纹结论，而是展示 Android 系统能够可靠提供的 VPN、Private DNS 与 DNS 信息。这种处理方式能够避免将“无法检测”误报成“安全”或“存在泄漏”。
+MyIP 原项目和 IPCheck.ing 官网包含浏览器环境相关能力，例如 WebRTC 候选地址检测和 JavaScript 浏览器指纹。Android 原生应用并不具备完全等价的浏览器运行上下文，因此本项目将 DNS 解析、Whois、端口可达性、VPN、Private DNS 与 DNS 服务器等能力优先在 APP 内实现；只有 WebRTC、JavaScript 指纹与真实多地区探针等确实依赖浏览器或外部探针网络的能力，才保留受限的浏览器备用入口。这种处理方式能够避免把“无法检测”误报成“安全”或“存在泄漏”。
 
 ## 技术栈
 
@@ -64,7 +68,7 @@ cd android
 
 ## 网络端点与隐私说明
 
-应用使用 `api.ipify.org` 获取公网 IP，并使用 `ipapi.co` 查询 IP 地理信息；网络连通性模块会对页面中列出的服务发起少量 HTTPS 请求。应用不会在本地持久化保存 IP 历史或检测报告，但第三方服务可能按照其自身隐私政策处理请求日志。用户应在正式部署或公开发布前，对接口可用性、服务条款和隐私政策进行复核。
+应用使用 `api.ipify.org` 获取公网 IP，并使用 `ipapi.co` 查询 IP 地理信息；网络连通性与服务状态模块会对页面中列出的服务发起少量 HTTPS 或 TCP 连接，DNS 解析使用 Android 系统解析器，Whois 查询连接公开注册表。应用不会在本地持久化保存 IP 历史或检测报告，但第三方服务与公开注册表可能按照其自身隐私政策处理请求日志。用户应在正式部署或公开发布前，对接口可用性、服务条款和隐私政策进行复核。
 
 ## 构建验证
 

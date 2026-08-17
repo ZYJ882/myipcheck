@@ -10,7 +10,11 @@ NetScope 是一个使用 **Kotlin + Jetpack Compose + Material 3** 编写的 And
 | 连通性 | 并行检测 Google、GitHub、Cloudflare、ChatGPT、YouTube、Wikipedia，显示状态和端到端 HTTP 延迟；支持单项重试和全部刷新。 |
 | Android 隐私诊断 | 显示系统 VPN 连接、Private DNS 工作模式与当前系统 DNS。应用明确说明 WebRTC 浏览器测试无法被原生 API 等价替代。 |
 | 轻量延迟 | 对 Cloudflare 发起一次轻量 HTTP 请求；不会触发大流量上传或下载。 |
-| 扩展工具 | 打开 IPCheck.ing 的全球延迟、DNS 解析、Whois、浏览器信息、服务状态等官网工具。 |
+| DNS 解析 | 通过 Android 系统解析器直接查询域名的 IPv4 / IPv6 地址。 |
+| Whois 查询 | 连接公开 Whois 注册表查询域名或 IP 注册信息。 |
+| 服务状态 | 从当前网络探测常用 HTTPS 服务的 443 端口可达性与连接耗时。 |
+| 设备环境 | 显示 Android 版本、语言与应用标识等原生环境信息。 |
+| 浏览器备用入口 | 仅在需要 WebRTC、JavaScript 指纹或真实多地区探针时打开 IPCheck.ing。 |
 
 ## 界面设计
 
@@ -36,7 +40,7 @@ app/build/outputs/apk/debug/app-debug.apk
 
 ## 网络与隐私
 
-应用访问 `api.ipify.org` 获取公网 IP，访问 `ipapi.co` 查询 IP 地理信息。连通性检测会对所列服务发起少量 HTTPS 请求。应用不收集、不上传或持久化保存用户 IP 与检测历史；数据仅保留在当前应用内存中。由于 IP 地理信息来自第三方公共服务，信息可能不准确或不可用。
+应用访问 `api.ipify.org` 获取公网 IP，访问 `ipapi.co` 查询 IP 地理信息。连通性与服务状态检测会对所列服务发起少量 HTTPS 或 TCP 连接，DNS 查询使用系统解析器，Whois 查询连接公开注册表。应用不收集、不上传或持久化保存用户 IP 与检测历史；数据仅保留在当前应用内存中。由于 IP 地理信息与 Whois 信息来自第三方公共服务，信息可能不准确或不可用。
 
 ## 参考来源
 

@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
@@ -29,7 +30,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowOutward
 import androidx.compose.material.icons.outlined.Business
 import androidx.compose.material.icons.outlined.CheckCircle
-import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Dns
 import androidx.compose.material.icons.outlined.ErrorOutline
@@ -48,7 +48,6 @@ import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material.icons.outlined.SettingsEthernet
 import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material.icons.outlined.Storage
-import androidx.compose.material.icons.outlined.TravelExplore
 import androidx.compose.material.icons.outlined.VpnLock
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
@@ -64,6 +63,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -95,6 +95,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.net.HttpURLConnection
+import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.Socket
 import java.net.URL
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
@@ -169,6 +172,27 @@ private data class PrivacySnapshot(
     val dnsServers: List<String>
 )
 
+private data class DnsLookupResult(
+    val host: String,
+    val addresses: List<String>,
+    val error: String? = null
+)
+
+private data class WhoisLookupResult(
+    val query: String,
+    val registry: String,
+    val lines: List<String>,
+    val error: String? = null
+)
+
+private data class PortProbeResult(
+    val host: String,
+    val port: Int,
+    val status: CheckStatus,
+    val latencyMs: Long? = null,
+    val detail: String = "等待检测"
+)
+
 private val DefaultEndpoints = listOf(
     EndpointResult("Google", "google.com", "https://www.google.com/generate_204"),
     EndpointResult("GitHub", "github.com", "https://github.com"),
@@ -176,6 +200,13 @@ private val DefaultEndpoints = listOf(
     EndpointResult("ChatGPT", "chatgpt.com", "https://chatgpt.com"),
     EndpointResult("YouTube", "youtube.com", "https://www.youtube.com/generate_204"),
     EndpointResult("Wikipedia", "wikipedia.org", "https://www.wikipedia.org")
+)
+
+private val DefaultPortProbes = listOf(
+    PortProbeResult("github.com", 443, CheckStatus.IDLE),
+    PortProbeResult("api.openai.com", 443, CheckStatus.IDLE),
+    PortProbeResult("cloudflare.com", 443, CheckStatus.IDLE),
+    PortProbeResult("www.wikipedia.org", 443, CheckStatus.IDLE)
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -191,6 +222,14 @@ private fun NetScopeApp() {
     var testingAll by remember { mutableStateOf(false) }
     var cloudflareLatency by remember { mutableStateOf<Long?>(null) }
     var speedTesting by remember { mutableStateOf(false) }
+    var dnsHost by remember { mutableStateOf("example.com") }
+    var dnsResult by remember { mutableStateOf<DnsLookupResult?>(null) }
+    var dnsLoading by remember { mutableStateOf(false) }
+    var whoisQuery by remember { mutableStateOf("") }
+    var whoisResult by remember { mutableStateOf<WhoisLookupResult?>(null) }
+    var whoisLoading by remember { mutableStateOf(false) }
+    var portProbes by remember { mutableStateOf(DefaultPortProbes) }
+    var portsLoading by remember { mutableStateOf(false) }
 
     fun refreshIpInfo() {
         scope.launch {
@@ -237,6 +276,51 @@ private fun NetScopeApp() {
             }
             cloudflareLatency = result.latencyMs
             speedTesting = false
+        }
+    }
+
+    fun resolveDns() {
+        val target = dnsHost.trim().removePrefix("https://").removePrefix("http://").substringBefore('/').trim()
+        if (target.isBlank()) {
+            dnsResult = DnsLookupResult("", emptyList(), "请输入域名或主机名")
+            return
+        }
+        scope.launch {
+            dnsLoading = true
+            dnsResult = withContext(Dispatchers.IO) {
+                runCatching { NetworkRepository.resolveDns(target) }
+                    .getOrElse { DnsLookupResult(target, emptyList(), it.asUserMessage()) }
+            }
+            dnsLoading = false
+        }
+    }
+
+    fun lookupWhois() {
+        val target = whoisQuery.trim()
+        if (target.isBlank()) {
+            whoisResult = WhoisLookupResult("", "", emptyList(), "请输入域名或 IP 地址")
+            return
+        }
+        scope.launch {
+            whoisLoading = true
+            whoisResult = withContext(Dispatchers.IO) {
+                runCatching { NetworkRepository.lookupWhois(target) }
+                    .getOrElse { WhoisLookupResult(target, "", emptyList(), it.asUserMessage()) }
+            }
+            whoisLoading = false
+        }
+    }
+
+    fun runPortProbes() {
+        scope.launch {
+            portsLoading = true
+            portProbes = portProbes.map { it.copy(status = CheckStatus.RUNNING, latencyMs = null, detail = "正在探测…") }
+            portProbes = coroutineScope {
+                portProbes.map { probe ->
+                    async(Dispatchers.IO) { NetworkRepository.probePort(probe) }
+                }.awaitAll()
+            }
+            portsLoading = false
         }
     }
 
@@ -341,12 +425,40 @@ private fun NetScopeApp() {
             item {
                 SectionHeader(
                     icon = Icons.Outlined.Hub,
-                    title = "扩展工具",
-                    subtitle = "更多工具在官网以网页方式安全运行"
+                    title = "原生网络诊断",
+                    subtitle = "常用查询与状态检测直接在 APP 内完成"
                 )
             }
             item {
-                ToolBox(context)
+                DnsLookupCard(
+                    host = dnsHost,
+                    result = dnsResult,
+                    loading = dnsLoading,
+                    onHostChange = { dnsHost = it },
+                    onLookup = { resolveDns() }
+                )
+            }
+            item {
+                WhoisLookupCard(
+                    query = whoisQuery,
+                    result = whoisResult,
+                    loading = whoisLoading,
+                    onQueryChange = { whoisQuery = it },
+                    onLookup = { lookupWhois() }
+                )
+            }
+            item {
+                ServiceStatusCard(
+                    probes = portProbes,
+                    loading = portsLoading,
+                    onProbe = { runPortProbes() }
+                )
+            }
+            item {
+                DeviceEnvironmentCard(context)
+            }
+            item {
+                BrowserFallbackCard(context)
             }
             item {
                 Footer()
@@ -718,51 +830,238 @@ private fun SpeedCard(latency: Long?, loading: Boolean, onMeasure: () -> Unit) {
 }
 
 @Composable
-private fun ToolBox(context: Context) {
-    val tools = listOf(
-        Tool("全球延迟测试", "从不同地区测量 Ping", Icons.Outlined.TravelExplore, "https://ipcheck.ing/tools/pingtest"),
-        Tool("DNS 解析", "多通道实时 DNS 结果", Icons.Outlined.Dns, "https://ipcheck.ing/tools/dnsresolver"),
-        Tool("Whois 查询", "查询域名或 IP 注册信息", Icons.Outlined.Storage, "https://ipcheck.ing/tools/whois"),
-        Tool("浏览器信息", "网页环境与指纹检测", Icons.Outlined.Language, "https://ipcheck.ing/tools/browserinfo"),
-        Tool("服务状态", "常用 AI 与开发服务可用性", Icons.Outlined.NetworkCheck, "https://ipcheck.ing/tools/servicestatus")
-    )
+private fun DnsLookupCard(
+    host: String,
+    result: DnsLookupResult?,
+    loading: Boolean,
+    onHostChange: (String) -> Unit,
+    onLookup: () -> Unit
+) {
     Card(
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = CardSurface),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column {
-            tools.forEachIndexed { index, tool ->
-                ToolRow(tool) {
-                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(tool.url)))
+        Column(modifier = Modifier.padding(17.dp)) {
+            NativeToolHeader(Icons.Outlined.Dns, "DNS 解析", "使用 Android 系统解析器查询 A / AAAA 地址")
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(
+                value = host,
+                onValueChange = onHostChange,
+                label = { Text("域名或主机名") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(10.dp))
+            Button(onClick = onLookup, enabled = !loading, colors = ButtonDefaults.buttonColors(containerColor = Blue)) {
+                if (loading) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.White)
+                    Spacer(Modifier.width(8.dp))
+                    Text("解析中")
+                } else {
+                    Icon(Icons.Outlined.Dns, contentDescription = null, modifier = Modifier.size(17.dp))
+                    Spacer(Modifier.width(7.dp))
+                    Text("开始解析")
                 }
-                if (index < tools.lastIndex) HorizontalDivider(color = Border, modifier = Modifier.padding(start = 58.dp))
+            }
+            result?.let {
+                Spacer(Modifier.height(12.dp))
+                HorizontalDivider(color = Border)
+                Spacer(Modifier.height(10.dp))
+                if (it.error != null) {
+                    ResultMessage(it.error, Red)
+                } else {
+                    Text("${it.host} 的解析结果", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = Ink)
+                    Spacer(Modifier.height(5.dp))
+                    Text(it.addresses.joinToString("\n"), fontSize = 12.sp, color = MutedInk, lineHeight = 18.sp)
+                }
             }
         }
     }
 }
 
-private data class Tool(val title: String, val subtitle: String, val icon: ImageVector, val url: String)
+@Composable
+private fun WhoisLookupCard(
+    query: String,
+    result: WhoisLookupResult?,
+    loading: Boolean,
+    onQueryChange: (String) -> Unit,
+    onLookup: () -> Unit
+) {
+    Card(
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = CardSurface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(17.dp)) {
+            NativeToolHeader(Icons.Outlined.Storage, "Whois 查询", "直接连接公开 Whois 注册表，不保存查询记录")
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(
+                value = query,
+                onValueChange = onQueryChange,
+                label = { Text("域名或 IP 地址") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(10.dp))
+            Button(onClick = onLookup, enabled = !loading, colors = ButtonDefaults.buttonColors(containerColor = Blue)) {
+                if (loading) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.White)
+                    Spacer(Modifier.width(8.dp))
+                    Text("查询中")
+                } else {
+                    Icon(Icons.Outlined.Storage, contentDescription = null, modifier = Modifier.size(17.dp))
+                    Spacer(Modifier.width(7.dp))
+                    Text("查询注册信息")
+                }
+            }
+            result?.let {
+                Spacer(Modifier.height(12.dp))
+                HorizontalDivider(color = Border)
+                Spacer(Modifier.height(10.dp))
+                if (it.error != null) {
+                    ResultMessage(it.error, Red)
+                } else {
+                    Text("注册表：${it.registry}", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = Ink)
+                    Spacer(Modifier.height(5.dp))
+                    Text(it.lines.joinToString("\n"), fontSize = 12.sp, color = MutedInk, lineHeight = 18.sp, maxLines = 10, overflow = TextOverflow.Ellipsis)
+                }
+            }
+        }
+    }
+}
 
 @Composable
-private fun ToolRow(tool: Tool, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier.fillMaxWidth().clickable { onClick() }.padding(horizontal = 16.dp, vertical = 14.dp),
-        verticalAlignment = Alignment.CenterVertically
+private fun ServiceStatusCard(probes: List<PortProbeResult>, loading: Boolean, onProbe: () -> Unit) {
+    Card(
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = CardSurface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        modifier = Modifier.fillMaxWidth()
     ) {
+        Column(modifier = Modifier.padding(17.dp)) {
+            NativeToolHeader(Icons.Outlined.NetworkCheck, "服务状态", "从当前网络探测 HTTPS 端口可达性，不代表服务全球状态")
+            Spacer(Modifier.height(9.dp))
+            probes.forEachIndexed { index, probe ->
+                ServiceProbeLine(probe)
+                if (index < probes.lastIndex) HorizontalDivider(color = Border, modifier = Modifier.padding(vertical = 8.dp))
+            }
+            Spacer(Modifier.height(12.dp))
+            OutlinedButton(onClick = onProbe, enabled = !loading) {
+                if (loading) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Blue)
+                    Spacer(Modifier.width(8.dp))
+                    Text("探测中")
+                } else {
+                    Icon(Icons.Outlined.NetworkCheck, contentDescription = null, modifier = Modifier.size(17.dp))
+                    Spacer(Modifier.width(7.dp))
+                    Text("重新探测")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun DeviceEnvironmentCard(context: Context) {
+    Card(
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = CardSurface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(17.dp)) {
+            NativeToolHeader(Icons.Outlined.Language, "设备环境", "显示原生 Android 能可靠读取的客户端环境信息")
+            Spacer(Modifier.height(10.dp))
+            InfoLine(Icons.Outlined.SettingsEthernet, "系统", "Android ${Build.VERSION.RELEASE} · API ${Build.VERSION.SDK_INT}")
+            InfoLine(Icons.Outlined.Public, "语言", java.util.Locale.getDefault().toLanguageTag())
+            InfoLine(Icons.Outlined.Info, "应用", context.packageName)
+            Spacer(Modifier.height(6.dp))
+            Text("原生 APP 没有网页 JavaScript 与 WebRTC 运行环境，因此不会伪造浏览器指纹或 WebRTC 泄漏结论。", fontSize = 12.sp, color = MutedInk, lineHeight = 18.sp)
+        }
+    }
+}
+
+@Composable
+private fun BrowserFallbackCard(context: Context) {
+    Card(
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFFBFCFD)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(17.dp)) {
+            NativeToolHeader(Icons.Outlined.ArrowOutward, "浏览器专属能力（备用）", "仅在需要 WebRTC、JavaScript 指纹或真实多地区探针时使用")
+            Spacer(Modifier.height(8.dp))
+            Text("以上 DNS、Whois、服务状态和设备环境均已在 APP 内完成。", fontSize = 12.sp, color = MutedInk)
+            Spacer(Modifier.height(11.dp))
+            OutlinedButton(onClick = {
+                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://ipcheck.ing/tools/browserinfo")))
+            }) {
+                Icon(Icons.Outlined.ArrowOutward, contentDescription = null, modifier = Modifier.size(17.dp))
+                Spacer(Modifier.width(7.dp))
+                Text("需要时打开浏览器诊断")
+            }
+        }
+    }
+}
+
+@Composable
+private fun NativeToolHeader(icon: ImageVector, title: String, subtitle: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
         Box(
-            modifier = Modifier.size(32.dp).clip(RoundedCornerShape(10.dp)).background(SoftBlue),
+            modifier = Modifier.size(38.dp).clip(RoundedCornerShape(12.dp)).background(SoftBlue),
             contentAlignment = Alignment.Center
         ) {
-            Icon(tool.icon, contentDescription = null, tint = Blue, modifier = Modifier.size(17.dp))
+            Icon(icon, contentDescription = null, tint = Blue, modifier = Modifier.size(19.dp))
         }
-        Spacer(Modifier.width(11.dp))
+        Spacer(Modifier.width(12.dp))
+        Column {
+            Text(title, fontWeight = FontWeight.SemiBold, color = Ink)
+            Text(subtitle, fontSize = 12.sp, color = MutedInk, lineHeight = 17.sp)
+        }
+    }
+}
+
+@Composable
+private fun ServiceProbeLine(probe: PortProbeResult) {
+    val color = when (probe.status) {
+        CheckStatus.SUCCESS -> Green
+        CheckStatus.FAILURE -> Red
+        CheckStatus.RUNNING -> Blue
+        CheckStatus.IDLE -> MutedInk
+    }
+    val label = when (probe.status) {
+        CheckStatus.SUCCESS -> "端口可达 · ${probe.latencyMs ?: 0}ms"
+        else -> probe.detail
+    }
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Icon(
+            imageVector = when (probe.status) {
+                CheckStatus.SUCCESS -> Icons.Outlined.CheckCircle
+                CheckStatus.FAILURE -> Icons.Outlined.ErrorOutline
+                else -> Icons.Outlined.Pending
+            },
+            contentDescription = null,
+            tint = color,
+            modifier = Modifier.size(18.dp)
+        )
+        Spacer(Modifier.width(10.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(tool.title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Ink)
-            Text(tool.subtitle, fontSize = 11.sp, color = MutedInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text("${probe.host}:${probe.port}", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = Ink)
+            Text(label, fontSize = 11.sp, color = color)
         }
-        Icon(Icons.Outlined.ChevronRight, contentDescription = "打开", tint = MutedInk, modifier = Modifier.size(19.dp))
+    }
+}
+
+@Composable
+private fun ResultMessage(message: String, color: Color) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(Icons.Outlined.ErrorOutline, contentDescription = null, tint = color, modifier = Modifier.size(17.dp))
+        Spacer(Modifier.width(7.dp))
+        Text(message, fontSize = 12.sp, color = color)
     }
 }
 
@@ -823,6 +1122,62 @@ private object NetworkRepository {
             }
         } catch (error: Exception) {
             endpoint.copy(status = CheckStatus.FAILURE, detail = error.asUserMessage())
+        }
+    }
+
+    fun resolveDns(host: String): DnsLookupResult {
+        val addresses = InetAddress.getAllByName(host)
+            .mapNotNull { it.hostAddress }
+            .distinct()
+            .sortedWith(compareBy<String> { if (it.contains(":")) 1 else 0 }.thenBy { it })
+        if (addresses.isEmpty()) throw IllegalStateException("未获得可用 DNS 地址")
+        return DnsLookupResult(host = host, addresses = addresses)
+    }
+
+    fun lookupWhois(query: String): WhoisLookupResult {
+        val normalized = query.removePrefix("https://").removePrefix("http://").substringBefore('/').trim().lowercase()
+        if (normalized.isBlank()) throw IllegalArgumentException("请输入域名或 IP 地址")
+        val registry = findWhoisRegistry(normalized)
+        val raw = queryWhois(registry, normalized)
+        val lines = raw.lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotBlank() && !it.startsWith("%") && !it.startsWith("#") }
+            .take(12)
+            .toList()
+        if (lines.isEmpty()) throw IllegalStateException("注册表未返回可读结果")
+        return WhoisLookupResult(query = normalized, registry = registry, lines = lines)
+    }
+
+    fun probePort(probe: PortProbeResult): PortProbeResult {
+        val started = System.nanoTime()
+        return try {
+            Socket().use { socket ->
+                socket.connect(InetSocketAddress(probe.host, probe.port), 7_000)
+            }
+            val elapsed = (System.nanoTime() - started) / 1_000_000
+            probe.copy(status = CheckStatus.SUCCESS, latencyMs = elapsed, detail = "端口可达")
+        } catch (error: Exception) {
+            probe.copy(status = CheckStatus.FAILURE, detail = error.asUserMessage())
+        }
+    }
+
+    private fun findWhoisRegistry(query: String): String {
+        val isIpAddress = query.matches(Regex("^[0-9a-fA-F:.]+$"))
+        val ianaQuery = if (isIpAddress) query else query.substringAfterLast('.')
+        val iana = queryWhois("whois.iana.org", ianaQuery)
+        val match = Regex("(?im)^(?:refer|whois|referralserver):\\s*(?:whois://)?([^\\s/]+)").find(iana)
+        return match?.groupValues?.getOrNull(1)?.trim()?.ifBlank { null } ?: "whois.iana.org"
+    }
+
+    private fun queryWhois(server: String, query: String): String {
+        Socket().use { socket ->
+            socket.connect(InetSocketAddress(server, 43), 8_000)
+            socket.soTimeout = 8_000
+            val writer = socket.getOutputStream().bufferedWriter()
+            writer.write(query)
+            writer.write("\r\n")
+            writer.flush()
+            return socket.getInputStream().bufferedReader().use { reader -> reader.readText().take(12_000) }
         }
     }
 
