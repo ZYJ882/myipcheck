@@ -13,6 +13,7 @@ MyIPCheck Android 采用适合移动端的单列卡片布局，将常用网络�
 | IP 信息 | 查询公网 IPv4、可用时的 IPv6、国家/地区/城市、时区、ISP 与 ASN，并支持复制 IPv4。 |
 | 网络连通性 | 检测 Google、GitHub、Cloudflare、ChatGPT、YouTube 和 Wikipedia，显示可达状态与延迟。 |
 | Android 隐私诊断 | 展示当前 VPN 状态、Private DNS 模式和系统 DNS 服务器。 |
+| 透明纯净度诊断 | 多源出口和国家一致性、IPv4 / IPv6 位置、公开 ASN / 组织属性与 Android 网络状态的可解释评分；不冒充专有 IP 风控数据库。 |
 | 轻量网络测量 | 对 Cloudflare 执行一次轻量 HTTP 延迟测量，不自动进行大流量上传或下载。 |
 | 原生 DNS 解析 | 通过 Android 系统解析器直接查询域名的可用 IPv4 / IPv6 地址。 |
 | 原生 Whois | 通过公开 Whois 注册表查询域名或 IP 的注册信息，不在本地保留查询记录。 |
@@ -23,6 +24,12 @@ MyIPCheck Android 采用适合移动端的单列卡片布局，将常用网络�
 ## 为什么采用 Android 原生实现
 
 MyIP 原项目和 IPCheck.ing 官网包含浏览器环境相关能力，例如 WebRTC 候选地址检测和 JavaScript 浏览器指纹。Android 原生应用并不具备完全等价的浏览器运行上下文，因此本项目将 DNS 解析、Whois、端口可达性、VPN、Private DNS 与 DNS 服务器等能力优先在 APP 内实现；只有 WebRTC、JavaScript 指纹与真实多地区探针等确实依赖浏览器或外部探针网络的能力，才保留受限的浏览器备用入口。这种处理方式能够避免把“无法检测”误报成“安全”或“存在泄漏”。
+
+## 透明纯净度诊断
+
+Ping0 的公开说明将 IP 风控、实际使用类型、原生性、共享人数与历史稳定性作为判断 IP 纯净度的主要维度。[4] 其中人工 IP 段标注、共享人数、恶意行为信誉、BGP / ASN / 企业 / 注册地历史属于持续维护的专有数据，Android 端不能诚实地复制。本项目因此实现 **透明纯净度诊断**：仅对当前时刻可公开验证的多源出口、国家、双栈位置、ASN / 组织属性及 Android VPN / Private DNS 状态进行说明性评分。未知或不可获取的数据均显示为“未覆盖”，不会被当作风险扣分。
+
+> 该模块的 0–100 分是当前网络出口的一致性 / 透明度提示，不是 Ping0 风控值，也不构成 IP 信誉、反欺诈、账号资格或业务合规结论。完整评分规则与未覆盖边界见 [`purity_module_spec.md`](purity_module_spec.md)。
 
 ## 技术栈
 
@@ -113,3 +120,4 @@ gh secret set ANDROID_KEY_PASSWORD --body android --repo ZYJ882/myipcheck
 [1]: https://github.com/jason5ng32/MyIP "MyIP 开源项目"
 [2]: https://ipcheck.ing/ "IPCheck.ing 官方网站"
 [3]: https://ipcheck.ing/tools/ "IPCheck.ing 工具列表"
+[4]: https://ping0.cc/ip/faq "Ping0 常见说明与风控值、原生 IP、共享人数定义"

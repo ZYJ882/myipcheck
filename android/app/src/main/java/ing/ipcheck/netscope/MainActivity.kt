@@ -193,6 +193,32 @@ private data class PortProbeResult(
     val detail: String = "等待检测"
 )
 
+private enum class PurityTone { CONSISTENT, NOTICE, NEUTRAL }
+
+private data class PuritySignal(
+    val title: String,
+    val value: String,
+    val detail: String,
+    val tone: PurityTone
+)
+
+private data class PurityReport(
+    val score: Int,
+    val label: String,
+    val summary: String,
+    val signals: List<PuritySignal>,
+    val checkedAt: String
+)
+
+private data class PublicGeoProbe(
+    val source: String,
+    val ip: String,
+    val countryCode: String,
+    val country: String,
+    val asn: String,
+    val organization: String
+)
+
 private val DefaultEndpoints = listOf(
     EndpointResult("Google", "google.com", "https://www.google.com/generate_204"),
     EndpointResult("GitHub", "github.com", "https://github.com"),
@@ -230,6 +256,9 @@ private fun NetScopeApp() {
     var whoisLoading by remember { mutableStateOf(false) }
     var portProbes by remember { mutableStateOf(DefaultPortProbes) }
     var portsLoading by remember { mutableStateOf(false) }
+    var purityReport by remember { mutableStateOf<PurityReport?>(null) }
+    var purityLoading by remember { mutableStateOf(false) }
+    var purityError by remember { mutableStateOf<String?>(null) }
 
     fun refreshIpInfo() {
         scope.launch {
@@ -276,6 +305,18 @@ private fun NetScopeApp() {
             }
             cloudflareLatency = result.latencyMs
             speedTesting = false
+        }
+    }
+
+    fun runPurityDiagnosis() {
+        scope.launch {
+            purityLoading = true
+            purityError = null
+            purityReport = null
+            runCatching { withContext(Dispatchers.IO) { NetworkRepository.runPurityDiagnosis(context) } }
+                .onSuccess { purityReport = it }
+                .onFailure { purityError = it.asUserMessage() }
+            purityLoading = false
         }
     }
 
@@ -327,6 +368,7 @@ private fun NetScopeApp() {
     LaunchedEffect(Unit) {
         refreshIpInfo()
         runAllConnectivity()
+        runPurityDiagnosis()
     }
 
     Scaffold(
@@ -389,6 +431,23 @@ private fun NetScopeApp() {
             }
             item {
                 Ipv6Card(snapshot?.ipv6, loading = ipLoading)
+            }
+            item {
+                SectionHeader(
+                    icon = Icons.Outlined.Security,
+                    title = "透明纯净度诊断",
+                    subtitle = "参考公开网络信号评估当前出口一致性",
+                    actionLabel = if (purityLoading) "检测中" else "重新检测",
+                    onAction = if (purityLoading) null else { { runPurityDiagnosis() } }
+                )
+            }
+            item {
+                PurityDiagnosisCard(
+                    report = purityReport,
+                    loading = purityLoading,
+                    error = purityError,
+                    onRetry = { runPurityDiagnosis() }
+                )
             }
             item {
                 SectionHeader(
@@ -604,6 +663,124 @@ private fun Ipv6Card(ipv6: String?, loading: Boolean) {
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun PurityDiagnosisCard(
+    report: PurityReport?,
+    loading: Boolean,
+    error: String?,
+    onRetry: () -> Unit
+) {
+    Card(
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = CardSurface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        when {
+            loading -> LoadingCard("正在比对出口、地理和网络属性…")
+            report != null -> {
+                val scoreColor = when {
+                    report.score >= 90 -> Green
+                    report.score >= 70 -> Amber
+                    else -> Red
+                }
+                val scoreBackground = when {
+                    report.score >= 90 -> SoftGreen
+                    report.score >= 70 -> SoftAmber
+                    else -> Color(0xFFFFECEC)
+                }
+                Column(modifier = Modifier.padding(17.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier.size(58.dp).clip(RoundedCornerShape(18.dp)).background(scoreBackground),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("${report.score}", fontWeight = FontWeight.Bold, fontSize = 23.sp, color = scoreColor)
+                                Text("/ 100", fontSize = 9.sp, color = scoreColor)
+                            }
+                        }
+                        Spacer(Modifier.width(13.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(report.label, fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Ink)
+                            Text(report.summary, fontSize = 12.sp, color = MutedInk, lineHeight = 18.sp)
+                        }
+                    }
+                    Spacer(Modifier.height(14.dp))
+                    HorizontalDivider(color = Border)
+                    Spacer(Modifier.height(5.dp))
+                    report.signals.forEachIndexed { index, signal ->
+                        PuritySignalLine(signal)
+                        if (index < report.signals.lastIndex) HorizontalDivider(color = Border, modifier = Modifier.padding(start = 28.dp))
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Text("检测时间：${report.checkedAt}", fontSize = 11.sp, color = MutedInk)
+                    Spacer(Modifier.height(7.dp))
+                    Text("说明：该分数来自公开可验证信号，不是 Ping0 风控值，不包含专有 IP 段标注、共享人数或历史信誉数据。", fontSize = 11.sp, color = MutedInk, lineHeight = 16.sp)
+                }
+            }
+            else -> {
+                Column(modifier = Modifier.padding(18.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.ErrorOutline, contentDescription = null, tint = Red)
+                        Spacer(Modifier.width(10.dp))
+                        Text("纯净度诊断暂不可用", fontWeight = FontWeight.SemiBold, color = Ink)
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text(error ?: "暂时无法获取公开网络属性", color = MutedInk, fontSize = 13.sp)
+                    Spacer(Modifier.height(12.dp))
+                    OutlinedButton(onClick = onRetry) {
+                        Icon(Icons.Outlined.Refresh, contentDescription = null, modifier = Modifier.size(17.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("重新检测")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PuritySignalLine(signal: PuritySignal) {
+    val color = when (signal.tone) {
+        PurityTone.CONSISTENT -> Green
+        PurityTone.NOTICE -> Amber
+        PurityTone.NEUTRAL -> MutedInk
+    }
+    val background = when (signal.tone) {
+        PurityTone.CONSISTENT -> SoftGreen
+        PurityTone.NOTICE -> SoftAmber
+        PurityTone.NEUTRAL -> Color(0xFFF0F3F5)
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier.size(22.dp).clip(RoundedCornerShape(7.dp)).background(background),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = when (signal.tone) {
+                    PurityTone.CONSISTENT -> Icons.Outlined.CheckCircle
+                    PurityTone.NOTICE -> Icons.Outlined.Info
+                    PurityTone.NEUTRAL -> Icons.Outlined.Pending
+                },
+                contentDescription = null,
+                tint = color,
+                modifier = Modifier.size(14.dp)
+            )
+        }
+        Spacer(Modifier.width(9.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(signal.title, fontWeight = FontWeight.SemiBold, fontSize = 12.sp, color = Ink)
+            Text(signal.detail, fontSize = 10.sp, color = MutedInk, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+        Spacer(Modifier.width(8.dp))
+        Text(signal.value, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = color, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -1159,6 +1336,138 @@ private object NetworkRepository {
         } catch (error: Exception) {
             probe.copy(status = CheckStatus.FAILURE, detail = error.asUserMessage())
         }
+    }
+
+    fun runPurityDiagnosis(context: Context): PurityReport {
+        val ipv4 = fetchIp(IPIFY_V4)
+        val ipApi = runCatching { probeIpApi(ipv4) }.getOrNull()
+        val ipWhoIs = runCatching { probeIpWhoIs() }.getOrNull()
+        val ipv6 = runCatching { fetchIp(IPIFY_DUAL).takeIf { it.contains(":") } }.getOrNull()
+        val ipv6Geo = ipv6?.let { runCatching { probeIpApi(it) }.getOrNull() }
+        if (ipApi == null && ipWhoIs == null) {
+            throw IllegalStateException("公开 IP 属性数据源暂不可用")
+        }
+
+        val signals = mutableListOf<PuritySignal>()
+        var score = 100
+
+        if (ipWhoIs != null) {
+            val sameIp = ipv4 == ipWhoIs.ip
+            if (!sameIp) score -= 35
+            signals += PuritySignal(
+                title = "多源出口一致性",
+                value = if (sameIp) "一致" else "不一致",
+                detail = "api.ipify.org：$ipv4；ipwho.is：${ipWhoIs.ip}",
+                tone = if (sameIp) PurityTone.CONSISTENT else PurityTone.NOTICE
+            )
+        } else {
+            signals += PuritySignal("多源出口一致性", "未覆盖", "ipwho.is 暂不可用，本次不扣分", PurityTone.NEUTRAL)
+        }
+
+        if (ipApi != null && ipWhoIs != null && ipApi.countryCode.isNotBlank() && ipWhoIs.countryCode.isNotBlank()) {
+            val sameCountry = ipApi.countryCode.equals(ipWhoIs.countryCode, ignoreCase = true)
+            if (!sameCountry) score -= 15
+            signals += PuritySignal(
+                title = "多源地理一致性",
+                value = if (sameCountry) "一致" else "提示",
+                detail = "ipapi.co：${ipApi.countryCode}；ipwho.is：${ipWhoIs.countryCode}",
+                tone = if (sameCountry) PurityTone.CONSISTENT else PurityTone.NOTICE
+            )
+        } else {
+            signals += PuritySignal("多源地理一致性", "未覆盖", "至少一个公开数据源未返回国家代码，本次不扣分", PurityTone.NEUTRAL)
+        }
+
+        if (ipv6 != null && ipv6Geo != null && ipApi != null && ipv6Geo.countryCode.isNotBlank() && ipApi.countryCode.isNotBlank()) {
+            val sameCountry = ipApi.countryCode.equals(ipv6Geo.countryCode, ignoreCase = true)
+            if (!sameCountry) score -= 15
+            signals += PuritySignal(
+                title = "IPv4 / IPv6 位置",
+                value = if (sameCountry) "一致" else "提示",
+                detail = "IPv4：${ipApi.countryCode}；IPv6：${ipv6Geo.countryCode}",
+                tone = if (sameCountry) PurityTone.CONSISTENT else PurityTone.NOTICE
+            )
+        } else {
+            signals += PuritySignal("IPv4 / IPv6 位置", "未覆盖", "未检测到双栈出口或 IPv6 地理属性，本次不扣分", PurityTone.NEUTRAL)
+        }
+
+        val metadata = ipApi ?: ipWhoIs
+        if (metadata != null && (metadata.asn.isNotBlank() || metadata.organization.isNotBlank())) {
+            val hosted = isLikelyHostedNetwork(metadata.asn, metadata.organization)
+            if (hosted) score -= 8
+            signals += PuritySignal(
+                title = "公开网络属性",
+                value = if (hosted) "托管提示" else "已读取",
+                detail = listOf(metadata.asn, metadata.organization).filter { it.isNotBlank() }.joinToString(" · "),
+                tone = if (hosted) PurityTone.NOTICE else PurityTone.CONSISTENT
+            )
+        } else {
+            signals += PuritySignal("公开网络属性", "未覆盖", "ASN / 组织字段不可用，本次不扣分", PurityTone.NEUTRAL)
+        }
+
+        val privacy = inspectPrivacy(context)
+        signals += PuritySignal(
+            title = "Android 网络状态",
+            value = if (privacy.vpnActive) "VPN 已连接" else "未检测到 VPN",
+            detail = "Private DNS：${privacy.privateDnsMode}${if (privacy.dnsServers.isNotEmpty()) "；DNS：${privacy.dnsServers.take(2).joinToString("、")}" else ""}",
+            tone = PurityTone.NEUTRAL
+        )
+
+        score = score.coerceIn(0, 100)
+        val label = when {
+            score >= 90 -> "出口一致"
+            score >= 70 -> "轻度提示"
+            score >= 40 -> "存在明显不一致"
+            else -> "多项不一致"
+        }
+        val summary = when {
+            score >= 90 -> "公开数据源的当前出口信息基本一致。"
+            score >= 70 -> "发现可解释的网络属性提示，建议结合实际网络配置复检。"
+            else -> "发现多个当前出口或位置不一致信号，建议检查代理、VPN、双栈和分流配置。"
+        }
+        return PurityReport(
+            score = score,
+            label = label,
+            summary = summary,
+            signals = signals,
+            checkedAt = LocalDateTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"))
+        )
+    }
+
+    private fun probeIpApi(ip: String): PublicGeoProbe {
+        val json = JSONObject(getText("https://ipapi.co/$ip/json/"))
+        if (json.has("error") && json.optBoolean("error")) throw IllegalStateException(json.stringOrBlank("reason").ifBlank { "ipapi.co 未返回数据" })
+        return PublicGeoProbe(
+            source = "ipapi.co",
+            ip = json.stringOrBlank("ip").ifBlank { ip },
+            countryCode = json.stringOrBlank("country_code"),
+            country = json.stringOrBlank("country_name"),
+            asn = json.stringOrBlank("asn"),
+            organization = json.stringOrBlank("org")
+        )
+    }
+
+    private fun probeIpWhoIs(): PublicGeoProbe {
+        val json = JSONObject(getText("https://ipwho.is/"))
+        if (!json.optBoolean("success", true)) throw IllegalStateException(json.stringOrBlank("message").ifBlank { "ipwho.is 未返回数据" })
+        val connection = json.optJSONObject("connection")
+        val rawAsn = connection?.opt("asn")?.toString().orEmpty()
+        return PublicGeoProbe(
+            source = "ipwho.is",
+            ip = json.stringOrBlank("ip"),
+            countryCode = json.stringOrBlank("country_code"),
+            country = json.stringOrBlank("country"),
+            asn = rawAsn.takeIf { it.isNotBlank() }?.let { if (it.startsWith("AS", ignoreCase = true)) it else "AS$it" }.orEmpty(),
+            organization = connection?.optString("org", "").orEmpty()
+        )
+    }
+
+    private fun isLikelyHostedNetwork(asn: String, organization: String): Boolean {
+        val text = "$asn $organization".lowercase()
+        val keywords = listOf(
+            "amazon", "aws", "google cloud", "microsoft azure", "digitalocean", "ovh", "vultr", "linode", "hetzner",
+            "alibaba cloud", "tencent cloud", "cloudflare", "datacenter", "data center", "hosting"
+        )
+        return keywords.any { text.contains(it) }
     }
 
     private fun findWhoisRegistry(query: String): String {
