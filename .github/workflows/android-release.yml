@@ -2,11 +2,15 @@ name: Build and Release Android APK
 
 on:
   push:
+    branches: [main]
     paths:
-      - "uploads/**.zip"
-      - "uploads/**.tar.gz"
-      - "uploads/**.tgz"
-      - "uploads/**.tar"
+      - "**"
+      - "!README.md"
+      - "!docs/**"
+      - "!incoming/*.apk"
+      - "!RELEASE_NOTES.md"
+      - "!.github/workflows/**"
+      - "!incoming/.gitkeep"
   workflow_dispatch:
     inputs:
       archive_path:
@@ -47,7 +51,7 @@ jobs:
         with:
           packages: "platforms;android-${{ env.ANDROID_COMPILE_SDK }} build-tools;${{ env.ANDROID_BUILD_TOOLS }}"
 
-      - name: Select uploaded source archive
+      - name: Resolve source input
         id: source
         shell: bash
         run: |
@@ -55,19 +59,25 @@ jobs:
           requested="${{ inputs.archive_path }}"
           if [[ -n "$requested" ]]; then
             archive="$requested"
-          else
+          elif [ "${{ github.event_name }}" = "push" ] && git show --pretty="" --name-only "$GITHUB_SHA" | grep -qE '^uploads/.*\.(zip|tar\.gz|tgz|tar)$'; then
             mapfile -t archives < <(find uploads -maxdepth 1 -type f \( -name '*.zip' -o -name '*.tar.gz' -o -name '*.tgz' -o -name '*.tar' \) -printf '%T@ %p\n' | sort -nr | cut -d' ' -f2-)
-            if [[ "${#archives[@]}" -eq 0 ]]; then
-              echo "No source archive found in uploads/." >&2
-              exit 1
-            fi
-            archive="${archives[0]}"
+            archive="${archives[0]:-}"
+          else
+            archive=""
           fi
-          [[ -f "$archive" ]] || { echo "Archive not found: $archive" >&2; exit 1; }
-          echo "archive=$archive" >> "$GITHUB_OUTPUT"
-          echo "Using source archive: $archive"
+          if [[ -n "$archive" ]]; then
+            [[ -f "$archive" ]] || { echo "Archive not found: $archive" >&2; exit 1; }
+            echo "archive=$archive" >> "$GITHUB_OUTPUT"
+            echo "mode=archive" >> "$GITHUB_OUTPUT"
+            echo "Using source archive: $archive"
+          else
+            echo "archive=repository source" >> "$GITHUB_OUTPUT"
+            echo "mode=repository" >> "$GITHUB_OUTPUT"
+            echo "Using current repository source"
+          fi
 
       - name: Extract and normalize Android source
+        if: steps.source.outputs.mode == 'archive'
         env:
           ARCHIVE: ${{ steps.source.outputs.archive }}
           DEST_DIR: android
@@ -143,10 +153,11 @@ jobs:
         run: |
           set -euo pipefail
           title="MyIPCheck Android ${VERSION_NAME}"
-          notes="Automated Android release built from ${ARCHIVE}.\n\nThis is an independent Android app based on the public MyIP/IPCheck.ing feature architecture."
+          notes_file="${GITHUB_WORKSPACE}/RELEASE_NOTES.md"
+          test -s "$notes_file" || { echo "RELEASE_NOTES.md 不存在或为空" >&2; exit 1; }
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release edit "$TAG" --title "$title" --notes "$notes"
+            gh release edit "$TAG" --title "$title" --notes-file "$notes_file"
             gh release upload "$TAG" "$APK" --clobber
           else
-            gh release create "$TAG" "$APK" --title "$title" --notes "$notes" --latest
+            gh release create "$TAG" "$APK" --title "$title" --notes-file "$notes_file" --latest
           fi
