@@ -257,28 +257,32 @@ private data class AbuseIpDbRisk(
     val lastReportedAt: String
 )
 
-private data class IpApiSecurity(
+private data class IpApiIsSecurity(
+    val isDatacenter: Boolean,
     val isProxy: Boolean,
-    val isCrawler: Boolean,
+    val isVpn: Boolean,
     val isTor: Boolean,
-    val isAnonymous: Boolean,
-    val isCloudProvider: Boolean,
-    val threatLevel: String,
-    val threatTypes: List<String>
+    val isAbuser: Boolean,
+    val isCrawler: Boolean,
+    val hasManagedEgress: Boolean,
+    val egressSummary: String,
+    val companyName: String,
+    val asnOrganization: String
 )
 
 private object SecureApiKeyStore {
     private const val PreferencesName = "secure_api_keys"
     private const val KeyAlias = "netscope_api_key_encryption"
     private const val AbuseKey = "abuseipdb"
-    private const val IpApiKey = "ipapi"
+    private const val IpApiIsKey = "ipapi_is"
+    private const val LegacyIpApiComKey = "ipapi"
     private const val CustomKey = "custom"
 
     fun load(context: Context): ApiKeyConfig {
         val preferences = context.getSharedPreferences(PreferencesName, Context.MODE_PRIVATE)
         return ApiKeyConfig(
             abuseIpDbKey = decrypt(preferences.getString(AbuseKey, null)).orEmpty(),
-            ipApiKey = decrypt(preferences.getString(IpApiKey, null)).orEmpty(),
+            ipApiKey = decrypt(preferences.getString(IpApiIsKey, null)).orEmpty(),
             customKey = decrypt(preferences.getString(CustomKey, null)).orEmpty()
         )
     }
@@ -286,7 +290,8 @@ private object SecureApiKeyStore {
     fun save(context: Context, config: ApiKeyConfig) {
         context.getSharedPreferences(PreferencesName, Context.MODE_PRIVATE).edit()
             .putString(AbuseKey, config.abuseIpDbKey.takeIf { it.isNotBlank() }?.let(::encrypt))
-            .putString(IpApiKey, config.ipApiKey.takeIf { it.isNotBlank() }?.let(::encrypt))
+            .putString(IpApiIsKey, config.ipApiKey.takeIf { it.isNotBlank() }?.let(::encrypt))
+            .remove(LegacyIpApiComKey)
             .putString(CustomKey, config.customKey.takeIf { it.isNotBlank() }?.let(::encrypt))
             .apply()
     }
@@ -586,7 +591,7 @@ private fun NetScopeApp() {
                 SectionHeader(
                     icon = Icons.Outlined.VpnLock,
                     title = "授权数据源 Key",
-                    subtitle = "本地 Keystore 加密保存；仅在诊断时发送给对应服务"
+                    subtitle = "AbuseIPDB 与 ipapi.is Key 本地 Keystore 加密保存"
                 )
             }
             item {
@@ -848,8 +853,8 @@ private fun ApiKeySettingsCard(
             OutlinedTextField(
                 value = ipApiKey,
                 onValueChange = { ipApiKey = it.trim() },
-                label = { Text("IPAPI.com Access Key") },
-                supportingText = { Text("用于 ipapi.com security 的代理、Tor、爬虫与威胁提示") },
+                label = { Text("ipapi.is API Key") },
+                supportingText = { Text("用于 VPN、代理、Tor、托管、滥用与爬虫提示") },
                 visualTransformation = PasswordVisualTransformation(),
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
@@ -1561,7 +1566,7 @@ private object NetworkRepository {
         val ipWhoIs = runCatching { probeIpWhoIs() }.getOrNull()
         val externalRisk = runCatching { probeProxyRisk(ipv4) }.getOrNull()
         val abuseRisk = apiKeys.abuseIpDbKey.takeIf { it.isNotBlank() }?.let { key -> runCatching { probeAbuseIpDb(ipv4, key) }.getOrNull() }
-        val ipApiSecurity = apiKeys.ipApiKey.takeIf { it.isNotBlank() }?.let { key -> runCatching { probeIpApiSecurity(ipv4, key) }.getOrNull() }
+        val ipApiIsSecurity = apiKeys.ipApiKey.takeIf { it.isNotBlank() }?.let { key -> runCatching { probeIpApiIsSecurity(ipv4, key) }.getOrNull() }
         val torProjectResult = runCatching { probeTorProject() }.getOrNull()
         val ipv6 = runCatching { fetchIp(IPIFY_DUAL).takeIf { it.contains(":") } }.getOrNull()
         val ipv6Geo = ipv6?.let { runCatching { probeIpApi(it) }.getOrNull() }
@@ -1726,34 +1731,35 @@ private object NetworkRepository {
         }
 
         if (apiKeys.ipApiKey.isBlank()) {
-            signals += PuritySignal("IPAPI 授权安全", "未配置", "填写 IPAPI Access Key 后才查询 security 字段；本次不扣分", PurityTone.NEUTRAL)
-        } else if (ipApiSecurity == null) {
-            signals += PuritySignal("IPAPI 授权安全", "未覆盖", "授权接口未返回可用 security 结果，本次不扣分", PurityTone.NEUTRAL)
+            signals += PuritySignal("ipapi.is 授权安全", "未配置", "填写 ipapi.is Key 后才查询 VPN、代理、Tor、托管与滥用字段；本次不扣分", PurityTone.NEUTRAL)
+        } else if (ipApiIsSecurity == null) {
+            signals += PuritySignal("ipapi.is 授权安全", "未覆盖", "授权接口未返回可用结果，本次不扣分", PurityTone.NEUTRAL)
         } else {
-            val threatPenalty = when (ipApiSecurity.threatLevel.lowercase()) {
-                "high" -> 25
-                "medium" -> 16
-                "low" -> 8
-                else -> 0
-            }
-            val flagPenalty = (if (ipApiSecurity.isProxy) 18 else 0) +
-                (if (ipApiSecurity.isCrawler) 10 else 0) +
-                (if (ipApiSecurity.isCloudProvider) 6 else 0) +
-                (if (ipApiSecurity.isTor && !torPenaltyApplied) 30 else 0)
-            score -= threatPenalty + flagPenalty
-            if (ipApiSecurity.isTor) torPenaltyApplied = true
+            val flagPenalty = (if (ipApiIsSecurity.isDatacenter) 6 else 0) +
+                (if (ipApiIsSecurity.isProxy) 18 else 0) +
+                (if (ipApiIsSecurity.isVpn) 12 else 0) +
+                (if (ipApiIsSecurity.isCrawler) 10 else 0) +
+                (if (ipApiIsSecurity.isAbuser) 18 else 0) +
+                (if (ipApiIsSecurity.isTor && !torPenaltyApplied) 30 else 0)
+            score -= flagPenalty
+            if (ipApiIsSecurity.isTor) torPenaltyApplied = true
             val flags = buildList {
-                if (ipApiSecurity.isProxy) add("代理")
-                if (ipApiSecurity.isCrawler) add("爬虫")
-                if (ipApiSecurity.isTor) add("Tor")
-                if (ipApiSecurity.isAnonymous) add("匿名")
-                if (ipApiSecurity.isCloudProvider) add("云服务")
+                if (ipApiIsSecurity.isDatacenter) add("托管")
+                if (ipApiIsSecurity.isProxy) add("代理")
+                if (ipApiIsSecurity.isVpn) add("VPN")
+                if (ipApiIsSecurity.isCrawler) add("爬虫")
+                if (ipApiIsSecurity.isTor) add("Tor")
+                if (ipApiIsSecurity.isAbuser) add("滥用")
             }
+            val identity = listOf(ipApiIsSecurity.companyName, ipApiIsSecurity.asnOrganization)
+                .filter { it.isNotBlank() }
+                .distinct()
+                .joinToString(" · ")
             signals += PuritySignal(
-                title = "IPAPI 授权安全",
-                value = ipApiSecurity.threatLevel.ifBlank { "未标记" },
-                detail = "${if (flags.isEmpty()) "未返回代理、Tor、爬虫或云服务标记" else flags.joinToString("、")}${if (ipApiSecurity.threatTypes.isNotEmpty()) "；威胁：${ipApiSecurity.threatTypes.joinToString("、")}" else ""}${if (threatPenalty + flagPenalty > 0) "；已扣 ${threatPenalty + flagPenalty} 分" else "；本项不扣分"}",
-                tone = if (threatPenalty + flagPenalty > 0) PurityTone.NOTICE else PurityTone.CONSISTENT
+                title = "ipapi.is 授权安全",
+                value = if (flags.isEmpty()) "未检出" else flags.joinToString("、"),
+                detail = "${if (identity.isBlank()) "未返回公司 / ASN" else identity}${if (ipApiIsSecurity.hasManagedEgress) "；受管理出口：${ipApiIsSecurity.egressSummary.ifBlank { "是" }}" else ""}${if (flagPenalty > 0) "；已扣 $flagPenalty 分" else "；本项不扣分"}",
+                tone = if (flagPenalty > 0) PurityTone.NOTICE else PurityTone.CONSISTENT
             )
         }
 
@@ -1832,31 +1838,36 @@ private object NetworkRepository {
         )
     }
 
-    private fun probeIpApiSecurity(ip: String, apiKey: String): IpApiSecurity {
-        val encodedIp = URLEncoder.encode(ip, Charsets.UTF_8.name())
-        val encodedKey = URLEncoder.encode(apiKey, Charsets.UTF_8.name())
-        val json = JSONObject(getText("https://api.ipapi.com/api/$encodedIp?access_key=$encodedKey&security=1"))
-        if (json.has("success") && !json.optBoolean("success", true)) {
-            val error = json.optJSONObject("error")
-            throw IllegalStateException(error?.optString("info")?.ifBlank { null } ?: "IPAPI 未返回可用结果")
-        }
-        val security = json.optJSONObject("security") ?: throw IllegalStateException("IPAPI 未返回 security 字段")
-        fun bool(vararg names: String): Boolean = names.any { security.optBoolean(it, false) }
-        val threatTypes = security.optJSONArray("threat_types")?.let { values ->
-            buildList {
-                for (index in 0 until values.length()) {
-                    values.optString(index).takeIf { it.isNotBlank() }?.let(::add)
-                }
-            }
+    private fun probeIpApiIsSecurity(ip: String, apiKey: String): IpApiIsSecurity {
+        val requestBody = JSONObject()
+            .put("q", ip)
+            .put("key", apiKey)
+            .toString()
+        val json = JSONObject(postJson("https://api.ipapi.is", requestBody))
+        json.stringOrBlank("error").takeIf { it.isNotBlank() }?.let { throw IllegalStateException(it) }
+        val egressValue = json.opt("egress_service")
+        val hasManagedEgress = egressValue != null && egressValue != JSONObject.NULL && egressValue != false
+        val egressSummary = when (egressValue) {
+            is JSONObject -> listOf(
+                egressValue.stringOrBlank("name"),
+                egressValue.stringOrBlank("type"),
+                egressValue.stringOrBlank("service")
+            ).filter { it.isNotBlank() }.distinct().joinToString(" · ")
+            is String -> egressValue.takeUnless { it.equals("null", ignoreCase = true) }
+            else -> ""
         }.orEmpty()
-        return IpApiSecurity(
-            isProxy = bool("is_proxy", "proxy"),
-            isCrawler = bool("is_crawler", "crawler"),
-            isTor = bool("is_tor", "tor"),
-            isAnonymous = bool("is_anonymous", "anonymous"),
-            isCloudProvider = bool("is_cloud_provider", "is_cloud", "cloud_provider"),
-            threatLevel = security.stringOrBlank("threat_level"),
-            threatTypes = threatTypes
+        val asn = json.optJSONObject("asn")
+        return IpApiIsSecurity(
+            isDatacenter = json.optBoolean("is_datacenter", false),
+            isProxy = json.optBoolean("is_proxy", false),
+            isVpn = json.optBoolean("is_vpn", false),
+            isTor = json.optBoolean("is_tor", false),
+            isAbuser = json.optBoolean("is_abuser", false),
+            isCrawler = json.optBoolean("is_crawler", false),
+            hasManagedEgress = hasManagedEgress,
+            egressSummary = egressSummary,
+            companyName = json.stringOrBlank("company_name").ifBlank { json.optJSONObject("company")?.stringOrBlank("name").orEmpty() },
+            asnOrganization = json.stringOrBlank("asn_org").ifBlank { asn?.stringOrBlank("org").orEmpty() }
         )
     }
 
@@ -1950,6 +1961,28 @@ private object NetworkRepository {
     private fun fetchIp(url: String): String {
         val json = JSONObject(getText(url))
         return json.getString("ip")
+    }
+
+    private fun postJson(url: String, body: String): String {
+        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 8_000
+            readTimeout = 8_000
+            requestMethod = "POST"
+            doOutput = true
+            setRequestProperty("Accept", "application/json")
+            setRequestProperty("Content-Type", "application/json")
+            setRequestProperty("User-Agent", "NetScope Android/1.0")
+        }
+        return try {
+            connection.outputStream.bufferedWriter().use { writer ->
+                writer.write(body)
+            }
+            val code = connection.responseCode
+            if (code !in 200..299) throw IllegalStateException("服务返回 HTTP $code")
+            connection.inputStream.bufferedReader().use { it.readText() }
+        } finally {
+            connection.disconnect()
+        }
     }
 
     private fun getText(url: String, headers: Map<String, String> = emptyMap()): String {

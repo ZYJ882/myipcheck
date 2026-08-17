@@ -1,10 +1,12 @@
 # 授权风险数据源接入说明
 
-**调研日期：** 2026-08-17
+**修订日期：** 2026-08-17
 
 ## 接入目标
 
-MyIPCheck 的增强纯净度诊断在已有公开无 Key 数据源基础上，允许用户在自己的 Android 设备上填入 AbuseIPDB API Key 与 IPAPI Access Key。应用只查询当前公网 IPv4，不读取账号、Cookie、浏览记录、设备指纹或其他本地隐私数据；Key 不提交到仓库、不写入日志、不上传至项目服务器。
+MyIPCheck 的增强纯净度诊断允许用户在自己的 Android 设备上填入 AbuseIPDB API Key 与 **ipapi.is API Key**。应用只查询当前公网 IPv4，不读取账号、Cookie、浏览记录、设备指纹或其他本地隐私数据；Key 不提交到仓库、不写入日志、不上传至项目服务器。
+
+> 更正：此前文档和 v1.0.5 错误写成 `ipapi.com`。正确的数据源为用户指定的 `ipapi.is`，其官方端点是 `https://api.ipapi.is/`。
 
 ## AbuseIPDB
 
@@ -12,11 +14,11 @@ MyIPCheck 的增强纯净度诊断在已有公开无 Key 数据源基础上，�
 
 评分保持当前项目的分段规则：分数 25–49 扣 8 分，50–74 扣 16 分，75–100 扣 25 分；若 `isTor=true` 且尚无其他 Tor 来源计分，再扣 30 分。接口失败、Key 未配置、请求超时或返回未知字段时，展示“未覆盖”且不扣分。
 
-## IPAPI
+## ipapi.is
 
-采用 IPAPI Origin / IP Lookup 的 `https://api.ipapi.com/api/{ip}?access_key=...&security=1` 请求。应用只解析 `security` 对象中的 `is_proxy`、`is_crawler`、`is_tor`、`is_anonymous`、`is_cloud_provider`、`threat_level` 与 `threat_types`。该服务要求将 Access Key 放在 URL 查询参数；因此 APP 不打印请求 URL，也不在错误提示、日志或报告中显示 Key。
+采用官方推荐的 JSON POST 认证：`POST https://api.ipapi.is`，请求体为 `{"q":"{当前公网 IP}","key":"{用户 Key}"}`。这避免了将 Key 放入 URL 查询参数。服务可能用 HTTP 200 返回包含顶层 `error` 字段的错误结果，因此应用先检测 `error`，再解析结果。
 
-评分沿用公开风险源的可解释规则：`threat_level` 为 low / medium / high 时分别扣 8 / 16 / 25 分；proxy、crawler、cloud provider 与尚未被其他来源计分的 Tor 标记分别按 18、10、6、30 分处理。未知、Key 未配置或接口不可用均不扣分。
+应用只读取 ipapi.is 的最小安全与网络属性字段：`is_datacenter`、`is_proxy`、`is_vpn`、`is_tor`、`is_abuser`、`is_crawler`、`egress_service`、`company_name`、`asn_org`。评分与之前的证据规则一致：托管 -6，代理 -18，VPN -12，Tor -30（跨来源去重），滥用 -18，爬虫 -10；`egress_service` 只展示，不自动扣分。未配置 Key、接口超时、配额不足或未知字段不扣分。
 
 ## 自定义预留 Key
 
@@ -30,6 +32,4 @@ MyIPCheck 的增强纯净度诊断在已有公开无 Key 数据源基础上，�
 
 [1] https://docs.abuseipdb.com/
 
-[2] https://ipapi.com/documentation
-
-[3] https://docs.apilayer.com/ipapi/docs/api-documentation
+[2] https://ipapi.is/developers.html
