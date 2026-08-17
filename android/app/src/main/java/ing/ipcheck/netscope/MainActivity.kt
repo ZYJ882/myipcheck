@@ -219,6 +219,20 @@ private data class PublicGeoProbe(
     val organization: String
 )
 
+private data class RiskIntelligence(
+    val source: String,
+    val proxy: Boolean,
+    val vpn: Boolean,
+    val tor: Boolean,
+    val hosting: Boolean,
+    val compromised: Boolean,
+    val scraper: Boolean,
+    val anonymous: Boolean,
+    val risk: Int?,
+    val confidence: Int?,
+    val attackSummary: String
+)
+
 private val DefaultEndpoints = listOf(
     EndpointResult("Google", "google.com", "https://www.google.com/generate_204"),
     EndpointResult("GitHub", "github.com", "https://github.com"),
@@ -719,7 +733,7 @@ private fun PurityDiagnosisCard(
                     Spacer(Modifier.height(10.dp))
                     Text("检测时间：${report.checkedAt}", fontSize = 11.sp, color = MutedInk)
                     Spacer(Modifier.height(7.dp))
-                    Text("说明：该分数来自公开可验证信号，不是 Ping0 风控值，不包含专有 IP 段标注、共享人数或历史信誉数据。", fontSize = 11.sp, color = MutedInk, lineHeight = 16.sp)
+                    Text("说明：本报告仅查询当前公网出口的公开风险与一致性信号，不读取账号、Cookie、浏览记录或设备指纹。分数不是 Ping0 风控值，不包含专有 IP 段标注、共享人数或历史信誉数据。", fontSize = 11.sp, color = MutedInk, lineHeight = 16.sp)
                 }
             }
             else -> {
@@ -1342,6 +1356,8 @@ private object NetworkRepository {
         val ipv4 = fetchIp(IPIFY_V4)
         val ipApi = runCatching { probeIpApi(ipv4) }.getOrNull()
         val ipWhoIs = runCatching { probeIpWhoIs() }.getOrNull()
+        val externalRisk = runCatching { probeProxyRisk(ipv4) }.getOrNull()
+        val torProjectResult = runCatching { probeTorProject() }.getOrNull()
         val ipv6 = runCatching { fetchIp(IPIFY_DUAL).takeIf { it.contains(":") } }.getOrNull()
         val ipv6Geo = ipv6?.let { runCatching { probeIpApi(it) }.getOrNull() }
         if (ipApi == null && ipWhoIs == null) {
@@ -1404,6 +1420,81 @@ private object NetworkRepository {
             signals += PuritySignal("公开网络属性", "未覆盖", "ASN / 组织字段不可用，本次不扣分", PurityTone.NEUTRAL)
         }
 
+        var torPenaltyApplied = false
+        if (externalRisk != null) {
+            val riskPenalty = when (externalRisk.risk ?: -1) {
+                in 75..100 -> 25
+                in 50..74 -> 16
+                in 25..49 -> 8
+                else -> 0
+            }
+            score -= riskPenalty
+            val riskText = externalRisk.risk?.let { "$it / 100" } ?: "未返回"
+            signals += PuritySignal(
+                title = "公开风险评分",
+                value = riskText,
+                detail = "${externalRisk.source} 置信度：${externalRisk.confidence?.let { "$it%" } ?: "未返回"}${if (riskPenalty > 0) "；已按公开规则扣 $riskPenalty 分" else "；本项不扣分"}",
+                tone = if (riskPenalty > 0) PurityTone.NOTICE else PurityTone.CONSISTENT
+            )
+
+            val relayFlags = buildList {
+                if (externalRisk.proxy) add("代理")
+                if (externalRisk.vpn) add("VPN")
+                if (externalRisk.tor) add("Tor")
+                if (externalRisk.anonymous) add("匿名")
+            }
+            val relayPenalty = (if (externalRisk.proxy) 18 else 0) + (if (externalRisk.vpn) 12 else 0) + (if (externalRisk.tor) 30 else 0)
+            score -= relayPenalty
+            if (externalRisk.tor) torPenaltyApplied = true
+            signals += PuritySignal(
+                title = "代理 / VPN / Tor",
+                value = if (relayFlags.isEmpty()) "未检出" else relayFlags.joinToString("、"),
+                detail = if (relayFlags.isEmpty()) "${externalRisk.source} 未返回代理、VPN 或 Tor 标记" else "${externalRisk.source} 明确标记；已按公开规则扣 $relayPenalty 分",
+                tone = if (relayFlags.isEmpty()) PurityTone.CONSISTENT else PurityTone.NOTICE
+            )
+
+            val attackPenalty = (if (externalRisk.compromised) 18 else 0) + (if (externalRisk.scraper) 10 else 0)
+            score -= attackPenalty
+            val attackFlags = buildList {
+                if (externalRisk.compromised) add("受损")
+                if (externalRisk.scraper) add("爬虫")
+            }
+            signals += PuritySignal(
+                title = "公开攻击提示",
+                value = if (attackFlags.isEmpty()) "未检出" else attackFlags.joinToString("、"),
+                detail = when {
+                    attackFlags.isNotEmpty() -> "${externalRisk.source}：${externalRisk.attackSummary.ifBlank { "无附加摘要" }}；已扣 $attackPenalty 分"
+                    externalRisk.attackSummary.isNotBlank() -> externalRisk.attackSummary
+                    else -> "${externalRisk.source} 未返回受损或爬虫标记"
+                },
+                tone = if (attackFlags.isEmpty()) PurityTone.CONSISTENT else PurityTone.NOTICE
+            )
+
+            if (externalRisk.hosting) score -= 6
+            signals += PuritySignal(
+                title = "风险源托管属性",
+                value = if (externalRisk.hosting) "托管提示" else "未标记",
+                detail = if (externalRisk.hosting) "${externalRisk.source} 将当前出口标记为托管网络；已扣 6 分" else "${externalRisk.source} 未标记托管网络",
+                tone = if (externalRisk.hosting) PurityTone.NOTICE else PurityTone.CONSISTENT
+            )
+        } else {
+            signals += PuritySignal("公开风险源", "未覆盖", "风险数据源暂不可用，本次不扣分", PurityTone.NEUTRAL)
+        }
+
+        if (torProjectResult == true) {
+            if (!torPenaltyApplied) score -= 30
+            signals += PuritySignal(
+                title = "Tor 官方出口验证",
+                value = "Tor 出口",
+                detail = if (torPenaltyApplied) "Tor Project 官方接口确认；已由其他 Tor 证据计分，未重复扣分" else "Tor Project 官方接口确认；已扣 30 分",
+                tone = PurityTone.NOTICE
+            )
+        } else if (torProjectResult == false) {
+            signals += PuritySignal("Tor 官方出口验证", "未检出", "Tor Project 官方接口未将当前出口识别为 Tor", PurityTone.CONSISTENT)
+        } else {
+            signals += PuritySignal("Tor 官方出口验证", "未覆盖", "Tor Project 接口暂不可用，本次不扣分", PurityTone.NEUTRAL)
+        }
+
         val privacy = inspectPrivacy(context)
         signals += PuritySignal(
             title = "Android 网络状态",
@@ -1416,13 +1507,13 @@ private object NetworkRepository {
         val label = when {
             score >= 90 -> "出口一致"
             score >= 70 -> "轻度提示"
-            score >= 40 -> "存在明显不一致"
-            else -> "多项不一致"
+            score >= 40 -> "存在明显风险或不一致"
+            else -> "高风险提示"
         }
         val summary = when {
             score >= 90 -> "公开数据源的当前出口信息基本一致。"
             score >= 70 -> "发现可解释的网络属性提示，建议结合实际网络配置复检。"
-            else -> "发现多个当前出口或位置不一致信号，建议检查代理、VPN、双栈和分流配置。"
+            else -> "发现多个公开风险或出口不一致信号，建议检查代理、VPN、双栈和分流配置。"
         }
         return PurityReport(
             score = score,
@@ -1459,6 +1550,44 @@ private object NetworkRepository {
             asn = rawAsn.takeIf { it.isNotBlank() }?.let { if (it.startsWith("AS", ignoreCase = true)) it else "AS$it" }.orEmpty(),
             organization = connection?.optString("org", "").orEmpty()
         )
+    }
+
+    private fun probeProxyRisk(ip: String): RiskIntelligence {
+        val root = JSONObject(getText("https://proxycheck.io/v3/$ip?vpn=1&asn=1&risk=1"))
+        if (!root.stringOrBlank("status").equals("ok", ignoreCase = true)) {
+            throw IllegalStateException(root.stringOrBlank("message").ifBlank { "ProxyCheck 未返回可用结果" })
+        }
+        val result = root.optJSONObject(ip) ?: throw IllegalStateException("ProxyCheck 未返回当前 IP 的结果")
+        val detections = result.optJSONObject("detections")
+        val attackHistory = result.optJSONObject("attack_history")
+        val attacks = mutableListOf<String>()
+        if (attackHistory != null) {
+            val keys = attackHistory.keys()
+            while (keys.hasNext() && attacks.size < 2) {
+                val key = keys.next()
+                val count = attackHistory.optInt(key, 0)
+                if (count > 0) attacks += "${key.replace('_', ' ')}：$count"
+            }
+        }
+        fun intField(name: String): Int? = detections?.opt(name)?.toString()?.toIntOrNull()
+        return RiskIntelligence(
+            source = "ProxyCheck",
+            proxy = detections?.optBoolean("proxy", false) ?: false,
+            vpn = detections?.optBoolean("vpn", false) ?: false,
+            tor = detections?.optBoolean("tor", false) ?: false,
+            hosting = detections?.optBoolean("hosting", false) ?: false,
+            compromised = detections?.optBoolean("compromised", false) ?: false,
+            scraper = detections?.optBoolean("scraper", false) ?: false,
+            anonymous = detections?.optBoolean("anonymous", false) ?: false,
+            risk = intField("risk"),
+            confidence = intField("confidence"),
+            attackSummary = attacks.joinToString("；")
+        )
+    }
+
+    private fun probeTorProject(): Boolean {
+        val json = JSONObject(getText("https://check.torproject.org/api/ip"))
+        return json.optBoolean("IsTor", false)
     }
 
     private fun isLikelyHostedNetwork(asn: String, organization: String): Boolean {
