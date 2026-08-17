@@ -8,6 +8,9 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
+import android.util.Base64
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
@@ -84,6 +87,7 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -99,8 +103,14 @@ import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.net.URL
+import java.net.URLEncoder
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
+import java.security.KeyStore
+import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.SecretKey
+import javax.crypto.spec.GCMParameterSpec
 
 private val AppBackground = Color(0xFFF4F6F8)
 private val CardSurface = Color(0xFFFFFFFF)
@@ -233,6 +243,96 @@ private data class RiskIntelligence(
     val attackSummary: String
 )
 
+private data class ApiKeyConfig(
+    val abuseIpDbKey: String = "",
+    val ipApiKey: String = "",
+    val customKey: String = ""
+)
+
+private data class AbuseIpDbRisk(
+    val confidenceScore: Int,
+    val totalReports: Int,
+    val isTor: Boolean,
+    val usageType: String,
+    val lastReportedAt: String
+)
+
+private data class IpApiSecurity(
+    val isProxy: Boolean,
+    val isCrawler: Boolean,
+    val isTor: Boolean,
+    val isAnonymous: Boolean,
+    val isCloudProvider: Boolean,
+    val threatLevel: String,
+    val threatTypes: List<String>
+)
+
+private object SecureApiKeyStore {
+    private const val PreferencesName = "secure_api_keys"
+    private const val KeyAlias = "netscope_api_key_encryption"
+    private const val AbuseKey = "abuseipdb"
+    private const val IpApiKey = "ipapi"
+    private const val CustomKey = "custom"
+
+    fun load(context: Context): ApiKeyConfig {
+        val preferences = context.getSharedPreferences(PreferencesName, Context.MODE_PRIVATE)
+        return ApiKeyConfig(
+            abuseIpDbKey = decrypt(preferences.getString(AbuseKey, null)).orEmpty(),
+            ipApiKey = decrypt(preferences.getString(IpApiKey, null)).orEmpty(),
+            customKey = decrypt(preferences.getString(CustomKey, null)).orEmpty()
+        )
+    }
+
+    fun save(context: Context, config: ApiKeyConfig) {
+        context.getSharedPreferences(PreferencesName, Context.MODE_PRIVATE).edit()
+            .putString(AbuseKey, config.abuseIpDbKey.takeIf { it.isNotBlank() }?.let(::encrypt))
+            .putString(IpApiKey, config.ipApiKey.takeIf { it.isNotBlank() }?.let(::encrypt))
+            .putString(CustomKey, config.customKey.takeIf { it.isNotBlank() }?.let(::encrypt))
+            .apply()
+    }
+
+    fun clear(context: Context) {
+        context.getSharedPreferences(PreferencesName, Context.MODE_PRIVATE).edit().clear().apply()
+    }
+
+    private fun encrypt(value: String): String {
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey())
+        val encrypted = cipher.doFinal(value.toByteArray(Charsets.UTF_8))
+        return Base64.encodeToString(cipher.iv, Base64.NO_WRAP) + ":" + Base64.encodeToString(encrypted, Base64.NO_WRAP)
+    }
+
+    private fun decrypt(value: String?): String? = runCatching {
+        if (value.isNullOrBlank()) return@runCatching null
+        val parts = value.split(":", limit = 2)
+        if (parts.size != 2) return@runCatching null
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(
+            Cipher.DECRYPT_MODE,
+            getOrCreateKey(),
+            GCMParameterSpec(128, Base64.decode(parts[0], Base64.NO_WRAP))
+        )
+        String(cipher.doFinal(Base64.decode(parts[1], Base64.NO_WRAP)), Charsets.UTF_8)
+    }.getOrNull()
+
+    private fun getOrCreateKey(): SecretKey {
+        val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        (keyStore.getKey(KeyAlias, null) as? SecretKey)?.let { return it }
+        return KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore").apply {
+            init(
+                KeyGenParameterSpec.Builder(
+                    KeyAlias,
+                    KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
+                )
+                    .setKeySize(256)
+                    .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                    .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                    .build()
+            )
+        }.generateKey()
+    }
+}
+
 private val DefaultEndpoints = listOf(
     EndpointResult("Google", "google.com", "https://www.google.com/generate_204"),
     EndpointResult("GitHub", "github.com", "https://github.com"),
@@ -273,6 +373,7 @@ private fun NetScopeApp() {
     var purityReport by remember { mutableStateOf<PurityReport?>(null) }
     var purityLoading by remember { mutableStateOf(false) }
     var purityError by remember { mutableStateOf<String?>(null) }
+    var apiKeyConfig by remember { mutableStateOf(runCatching { SecureApiKeyStore.load(context) }.getOrDefault(ApiKeyConfig())) }
 
     fun refreshIpInfo() {
         scope.launch {
@@ -327,11 +428,29 @@ private fun NetScopeApp() {
             purityLoading = true
             purityError = null
             purityReport = null
-            runCatching { withContext(Dispatchers.IO) { NetworkRepository.runPurityDiagnosis(context) } }
+            runCatching { withContext(Dispatchers.IO) { NetworkRepository.runPurityDiagnosis(context, apiKeyConfig) } }
                 .onSuccess { purityReport = it }
                 .onFailure { purityError = it.asUserMessage() }
             purityLoading = false
         }
+    }
+
+    fun saveApiKeys(config: ApiKeyConfig) {
+        runCatching { SecureApiKeyStore.save(context, config) }
+            .onSuccess {
+                apiKeyConfig = config
+                runPurityDiagnosis()
+            }
+            .onFailure { purityError = "无法保存本地 Key：${it.asUserMessage()}" }
+    }
+
+    fun clearApiKeys() {
+        runCatching { SecureApiKeyStore.clear(context) }
+            .onSuccess {
+                apiKeyConfig = ApiKeyConfig()
+                runPurityDiagnosis()
+            }
+            .onFailure { purityError = "无法清除本地 Key：${it.asUserMessage()}" }
     }
 
     fun resolveDns() {
@@ -449,8 +568,8 @@ private fun NetScopeApp() {
             item {
                 SectionHeader(
                     icon = Icons.Outlined.Security,
-                    title = "透明纯净度诊断",
-                    subtitle = "参考公开网络信号评估当前出口一致性",
+                    title = "增强纯净度诊断",
+                    subtitle = "公开风险源与网络信号的可解释独立评分",
                     actionLabel = if (purityLoading) "检测中" else "重新检测",
                     onAction = if (purityLoading) null else { { runPurityDiagnosis() } }
                 )
@@ -461,6 +580,20 @@ private fun NetScopeApp() {
                     loading = purityLoading,
                     error = purityError,
                     onRetry = { runPurityDiagnosis() }
+                )
+            }
+            item {
+                SectionHeader(
+                    icon = Icons.Outlined.VpnLock,
+                    title = "授权数据源 Key",
+                    subtitle = "本地 Keystore 加密保存；仅在诊断时发送给对应服务"
+                )
+            }
+            item {
+                ApiKeySettingsCard(
+                    savedConfig = apiKeyConfig,
+                    onSave = { saveApiKeys(it) },
+                    onClear = { clearApiKeys() }
                 )
             }
             item {
@@ -676,6 +809,76 @@ private fun Ipv6Card(ipv6: String?, loading: Boolean) {
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ApiKeySettingsCard(
+    savedConfig: ApiKeyConfig,
+    onSave: (ApiKeyConfig) -> Unit,
+    onClear: () -> Unit
+) {
+    var abuseKey by remember(savedConfig) { mutableStateOf(savedConfig.abuseIpDbKey) }
+    var ipApiKey by remember(savedConfig) { mutableStateOf(savedConfig.ipApiKey) }
+    var customKey by remember(savedConfig) { mutableStateOf(savedConfig.customKey) }
+    val configuredCount = listOf(abuseKey, ipApiKey, customKey).count { it.isNotBlank() }
+
+    Card(
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = CardSurface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(17.dp)) {
+            Text("可选授权增强", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Ink)
+            Spacer(Modifier.height(5.dp))
+            Text("Key 使用 Android Keystore 加密保存在本机，不上传到本项目服务器、不写入日志。保存后会自动重新执行纯净度诊断。", fontSize = 12.sp, color = MutedInk, lineHeight = 18.sp)
+            Spacer(Modifier.height(13.dp))
+            OutlinedTextField(
+                value = abuseKey,
+                onValueChange = { abuseKey = it.trim() },
+                label = { Text("AbuseIPDB API Key") },
+                supportingText = { Text("用于 abuseConfidenceScore、报告数、Tor 与使用类型提示") },
+                visualTransformation = PasswordVisualTransformation(),
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(10.dp))
+            OutlinedTextField(
+                value = ipApiKey,
+                onValueChange = { ipApiKey = it.trim() },
+                label = { Text("IPAPI.com Access Key") },
+                supportingText = { Text("用于 ipapi.com security 的代理、Tor、爬虫与威胁提示") },
+                visualTransformation = PasswordVisualTransformation(),
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(10.dp))
+            OutlinedTextField(
+                value = customKey,
+                onValueChange = { customKey = it.trim() },
+                label = { Text("自定义预留 Key（可选）") },
+                supportingText = { Text("仅本地加密保存，当前版本不会发送或参与评分") },
+                visualTransformation = PasswordVisualTransformation(),
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Button(onClick = { onSave(ApiKeyConfig(abuseKey, ipApiKey, customKey)) }) {
+                    Text("加密保存并检测")
+                }
+                if (configuredCount > 0) {
+                    OutlinedButton(onClick = onClear) { Text("清除全部") }
+                }
+            }
+            Spacer(Modifier.height(9.dp))
+            Text(
+                if (configuredCount > 0) "已配置 $configuredCount / 3 个本地 Key。" else "未配置时，APP 仍只使用不需要 Key 的公开基础诊断。",
+                fontSize = 11.sp,
+                color = MutedInk
+            )
         }
     }
 }
@@ -1352,11 +1555,13 @@ private object NetworkRepository {
         }
     }
 
-    fun runPurityDiagnosis(context: Context): PurityReport {
+    fun runPurityDiagnosis(context: Context, apiKeys: ApiKeyConfig = ApiKeyConfig()): PurityReport {
         val ipv4 = fetchIp(IPIFY_V4)
         val ipApi = runCatching { probeIpApi(ipv4) }.getOrNull()
         val ipWhoIs = runCatching { probeIpWhoIs() }.getOrNull()
         val externalRisk = runCatching { probeProxyRisk(ipv4) }.getOrNull()
+        val abuseRisk = apiKeys.abuseIpDbKey.takeIf { it.isNotBlank() }?.let { key -> runCatching { probeAbuseIpDb(ipv4, key) }.getOrNull() }
+        val ipApiSecurity = apiKeys.ipApiKey.takeIf { it.isNotBlank() }?.let { key -> runCatching { probeIpApiSecurity(ipv4, key) }.getOrNull() }
         val torProjectResult = runCatching { probeTorProject() }.getOrNull()
         val ipv6 = runCatching { fetchIp(IPIFY_DUAL).takeIf { it.contains(":") } }.getOrNull()
         val ipv6Geo = ipv6?.let { runCatching { probeIpApi(it) }.getOrNull() }
@@ -1482,17 +1687,74 @@ private object NetworkRepository {
         }
 
         if (torProjectResult == true) {
+            val wasAlreadyScored = torPenaltyApplied
             if (!torPenaltyApplied) score -= 30
+            torPenaltyApplied = true
             signals += PuritySignal(
                 title = "Tor 官方出口验证",
                 value = "Tor 出口",
-                detail = if (torPenaltyApplied) "Tor Project 官方接口确认；已由其他 Tor 证据计分，未重复扣分" else "Tor Project 官方接口确认；已扣 30 分",
+                detail = if (wasAlreadyScored) "Tor Project 官方接口确认；已由其他 Tor 证据计分，未重复扣分" else "Tor Project 官方接口确认；已扣 30 分",
                 tone = PurityTone.NOTICE
             )
         } else if (torProjectResult == false) {
             signals += PuritySignal("Tor 官方出口验证", "未检出", "Tor Project 官方接口未将当前出口识别为 Tor", PurityTone.CONSISTENT)
         } else {
             signals += PuritySignal("Tor 官方出口验证", "未覆盖", "Tor Project 接口暂不可用，本次不扣分", PurityTone.NEUTRAL)
+        }
+
+        if (apiKeys.abuseIpDbKey.isBlank()) {
+            signals += PuritySignal("AbuseIPDB 授权风险", "未配置", "填写本机 Key 后才查询 abuseConfidenceScore；本次不扣分", PurityTone.NEUTRAL)
+        } else if (abuseRisk == null) {
+            signals += PuritySignal("AbuseIPDB 授权风险", "未覆盖", "授权接口未返回可用结果，本次不扣分", PurityTone.NEUTRAL)
+        } else {
+            val abusePenalty = when (abuseRisk.confidenceScore) {
+                in 75..100 -> 25
+                in 50..74 -> 16
+                in 25..49 -> 8
+                else -> 0
+            }
+            score -= abusePenalty
+            val torPenalty = if (abuseRisk.isTor && !torPenaltyApplied) 30 else 0
+            score -= torPenalty
+            if (abuseRisk.isTor) torPenaltyApplied = true
+            signals += PuritySignal(
+                title = "AbuseIPDB 授权风险",
+                value = "${abuseRisk.confidenceScore} / 100",
+                detail = "报告：${abuseRisk.totalReports}；类型：${abuseRisk.usageType.ifBlank { "未返回" }}；最近报告：${abuseRisk.lastReportedAt.ifBlank { "未返回" }}${if (abuseRisk.isTor) "；Tor${if (torPenalty == 0) " 已由其他来源计分" else " 扣 $torPenalty 分"}" else ""}${if (abusePenalty > 0) "；风险分扣 $abusePenalty 分" else "；本项不扣分"}",
+                tone = if (abusePenalty > 0 || abuseRisk.isTor) PurityTone.NOTICE else PurityTone.CONSISTENT
+            )
+        }
+
+        if (apiKeys.ipApiKey.isBlank()) {
+            signals += PuritySignal("IPAPI 授权安全", "未配置", "填写 IPAPI Access Key 后才查询 security 字段；本次不扣分", PurityTone.NEUTRAL)
+        } else if (ipApiSecurity == null) {
+            signals += PuritySignal("IPAPI 授权安全", "未覆盖", "授权接口未返回可用 security 结果，本次不扣分", PurityTone.NEUTRAL)
+        } else {
+            val threatPenalty = when (ipApiSecurity.threatLevel.lowercase()) {
+                "high" -> 25
+                "medium" -> 16
+                "low" -> 8
+                else -> 0
+            }
+            val flagPenalty = (if (ipApiSecurity.isProxy) 18 else 0) +
+                (if (ipApiSecurity.isCrawler) 10 else 0) +
+                (if (ipApiSecurity.isCloudProvider) 6 else 0) +
+                (if (ipApiSecurity.isTor && !torPenaltyApplied) 30 else 0)
+            score -= threatPenalty + flagPenalty
+            if (ipApiSecurity.isTor) torPenaltyApplied = true
+            val flags = buildList {
+                if (ipApiSecurity.isProxy) add("代理")
+                if (ipApiSecurity.isCrawler) add("爬虫")
+                if (ipApiSecurity.isTor) add("Tor")
+                if (ipApiSecurity.isAnonymous) add("匿名")
+                if (ipApiSecurity.isCloudProvider) add("云服务")
+            }
+            signals += PuritySignal(
+                title = "IPAPI 授权安全",
+                value = ipApiSecurity.threatLevel.ifBlank { "未标记" },
+                detail = "${if (flags.isEmpty()) "未返回代理、Tor、爬虫或云服务标记" else flags.joinToString("、")}${if (ipApiSecurity.threatTypes.isNotEmpty()) "；威胁：${ipApiSecurity.threatTypes.joinToString("、")}" else ""}${if (threatPenalty + flagPenalty > 0) "；已扣 ${threatPenalty + flagPenalty} 分" else "；本项不扣分"}",
+                tone = if (threatPenalty + flagPenalty > 0) PurityTone.NOTICE else PurityTone.CONSISTENT
+            )
         }
 
         val privacy = inspectPrivacy(context)
@@ -1549,6 +1811,52 @@ private object NetworkRepository {
             country = json.stringOrBlank("country"),
             asn = rawAsn.takeIf { it.isNotBlank() }?.let { if (it.startsWith("AS", ignoreCase = true)) it else "AS$it" }.orEmpty(),
             organization = connection?.optString("org", "").orEmpty()
+        )
+    }
+
+    private fun probeAbuseIpDb(ip: String, apiKey: String): AbuseIpDbRisk {
+        val encodedIp = URLEncoder.encode(ip, Charsets.UTF_8.name())
+        val json = JSONObject(
+            getText(
+                "https://api.abuseipdb.com/api/v2/check?ipAddress=$encodedIp&maxAgeInDays=90",
+                mapOf("Key" to apiKey)
+            )
+        )
+        val data = json.optJSONObject("data") ?: throw IllegalStateException("AbuseIPDB 未返回 data 字段")
+        return AbuseIpDbRisk(
+            confidenceScore = data.optInt("abuseConfidenceScore", 0).coerceIn(0, 100),
+            totalReports = data.optInt("totalReports", 0).coerceAtLeast(0),
+            isTor = data.optBoolean("isTor", false),
+            usageType = data.stringOrBlank("usageType"),
+            lastReportedAt = data.stringOrBlank("lastReportedAt")
+        )
+    }
+
+    private fun probeIpApiSecurity(ip: String, apiKey: String): IpApiSecurity {
+        val encodedIp = URLEncoder.encode(ip, Charsets.UTF_8.name())
+        val encodedKey = URLEncoder.encode(apiKey, Charsets.UTF_8.name())
+        val json = JSONObject(getText("https://api.ipapi.com/api/$encodedIp?access_key=$encodedKey&security=1"))
+        if (json.has("success") && !json.optBoolean("success", true)) {
+            val error = json.optJSONObject("error")
+            throw IllegalStateException(error?.optString("info")?.ifBlank { null } ?: "IPAPI 未返回可用结果")
+        }
+        val security = json.optJSONObject("security") ?: throw IllegalStateException("IPAPI 未返回 security 字段")
+        fun bool(vararg names: String): Boolean = names.any { security.optBoolean(it, false) }
+        val threatTypes = security.optJSONArray("threat_types")?.let { values ->
+            buildList {
+                for (index in 0 until values.length()) {
+                    values.optString(index).takeIf { it.isNotBlank() }?.let(::add)
+                }
+            }
+        }.orEmpty()
+        return IpApiSecurity(
+            isProxy = bool("is_proxy", "proxy"),
+            isCrawler = bool("is_crawler", "crawler"),
+            isTor = bool("is_tor", "tor"),
+            isAnonymous = bool("is_anonymous", "anonymous"),
+            isCloudProvider = bool("is_cloud_provider", "is_cloud", "cloud_provider"),
+            threatLevel = security.stringOrBlank("threat_level"),
+            threatTypes = threatTypes
         )
     }
 
@@ -1644,13 +1952,14 @@ private object NetworkRepository {
         return json.getString("ip")
     }
 
-    private fun getText(url: String): String {
+    private fun getText(url: String, headers: Map<String, String> = emptyMap()): String {
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             connectTimeout = 8_000
             readTimeout = 8_000
             requestMethod = "GET"
             setRequestProperty("Accept", "application/json")
             setRequestProperty("User-Agent", "NetScope Android/1.0")
+            headers.forEach { (name, value) -> setRequestProperty(name, value) }
         }
         return try {
             val code = connection.responseCode

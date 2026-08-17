@@ -21,17 +21,21 @@
 | Compromised 标记 | `proxycheck.io` 明确标记受损 / 恶意活动 | -18 |
 | Scraper 标记 | `proxycheck.io` 明确标记爬虫 | -10 |
 | Hosting 标记 | `proxycheck.io` 明确标记托管网络 | -6 |
+| AbuseIPDB 置信度 | 用户配置 Key 后，`abuseConfidenceScore` 为 25–49 / 50–74 / 75–100 | -8 / -16 / -25 |
+| AbuseIPDB Tor | 用户配置 Key 后，`isTor=true` | -30；若已由其他 Tor 来源计分则不重复扣分 |
+| IPAPI threat level | 用户配置 Key 后，`security.threat_level` 为 low / medium / high | -8 / -16 / -25 |
+| IPAPI 安全标记 | 用户配置 Key 后，proxy / crawler / cloud provider / 未重复计分的 Tor | -18 / -10 / -6 / -30 |
 | Android VPN / Private DNS | 系统显示 VPN 或 Private DNS | 0，仅展示网络状态 |
 
 评分档位为：90–100“出口一致”、70–89“轻度提示”、40–69“存在明显风险或不一致”、0–39“高风险提示”。该档位为独立模型的结果，不使用“Ping0 风控值”“极度纯净”“原生 IP”或“家庭宽带 / IDC”作为结论。
 
 ## 证据展示
 
-报告应分组显示：出口与位置一致性、公开网络属性、代理 / VPN / Tor、攻击与风险提示、Android 网络状态。对于外部风险数据，仅显示与用户当前结果直接相关的少量结论、来源和查询时刻，不显示或转售供应商完整响应。
+报告应分组显示：出口与位置一致性、公开网络属性、代理 / VPN / Tor、攻击与风险提示、授权数据源证据和 Android 网络状态。对于外部风险数据，仅显示与用户当前结果直接相关的少量结论、来源和查询时刻，不显示或转售供应商完整响应。
 
 ## 数据与隐私
 
-模块按需调用 `api.ipify.org`、`ipapi.co`、`ipwho.is`、`proxycheck.io` 和 `check.torproject.org`。调用仅使用当前公网 IP 或由服务端自动识别当前来源 IP，不携带账号、Cookie、浏览记录、设备指纹、位置权限或其他个人敏感数据。应用不在本地持久化保存 IP 历史或检测报告；结果仅保留在当前内存界面。第三方服务可能按照各自隐私政策记录请求日志，用户可不运行该模块而继续使用其他 APP 功能。
+模块按需调用 `api.ipify.org`、`ipapi.co`、`ipwho.is`、`proxycheck.io` 和 `check.torproject.org`。当用户自行配置 Key 后，模块还会调用 AbuseIPDB APIv2 Check 与 IPAPI security 端点。调用仅使用当前公网 IP 或由服务端自动识别当前来源 IP，不携带账号、Cookie、浏览记录、设备指纹、位置权限或其他个人敏感数据。三类 Key 使用 Android Keystore 的 AES-GCM 密钥加密保存在私有本地偏好设置，并禁用系统备份和设备迁移；自定义预留 Key 当前不会发往任何服务。应用不在本地持久化保存 IP 历史或检测报告；结果仅保留在当前内存界面。第三方服务可能按照各自隐私政策记录请求日志，用户可不运行该模块而继续使用其他 APP 功能。
 
 ## 不覆盖的 Ping0 专有能力
 
@@ -44,3 +48,7 @@
 [2] https://proxycheck.io/terms
 
 [3] https://check.torproject.org/api/ip
+
+[4] https://docs.abuseipdb.com/
+
+[5] https://ipapi.com/documentation

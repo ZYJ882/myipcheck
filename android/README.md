@@ -9,7 +9,7 @@ NetScope 是一个使用 **Kotlin + Jetpack Compose + Material 3** 编写的 And
 | IP 信息 | 查询公网 IPv4、IPv6（如可用）、国家/地区/城市、时区、ISP 与 ASN；可一键复制 IPv4。 |
 | 连通性 | 并行检测 Google、GitHub、Cloudflare、ChatGPT、YouTube、Wikipedia，显示状态和端到端 HTTP 延迟；支持单项重试和全部刷新。 |
 | Android 隐私诊断 | 显示系统 VPN 连接、Private DNS 工作模式与当前系统 DNS。应用明确说明 WebRTC 浏览器测试无法被原生 API 等价替代。 |
-| 增强纯净度诊断 | 多源出口、地理、双栈位置、公开 ASN / 组织属性，以及公开 Proxy / VPN / Tor / 托管 / 攻击风险信号的 0–100 独立评分。 |
+| 增强纯净度诊断 | 多源出口、地理、双栈位置、公开 ASN / 组织属性，以及公开 Proxy / VPN / Tor / 托管 / 攻击风险信号的 0–100 独立评分；可选接入用户设备本地保存的 AbuseIPDB 与 IPAPI.com Key。 |
 | 轻量延迟 | 对 Cloudflare 发起一次轻量 HTTP 请求；不会触发大流量上传或下载。 |
 | DNS 解析 | 通过 Android 系统解析器直接查询域名的 IPv4 / IPv6 地址。 |
 | Whois 查询 | 连接公开 Whois 注册表查询域名或 IP 注册信息。 |
@@ -19,7 +19,7 @@ NetScope 是一个使用 **Kotlin + Jetpack Compose + Material 3** 编写的 And
 
 ## 纯净度诊断边界
 
-本模块参考 Ping0 公开的风险、IP 类型、原生性与共享稳定性等概念，但不使用或伪称其专有人工 IP 段标注、Ping0 自有恶意行为信誉、共享人数、BGP / ASN / 企业历史或注册地历史。模块通过公开风险源补充 Proxy / VPN / Tor / 托管 / 攻击提示，并以独立规则形成分数；该分数仅反映本次检测时的公开出口一致性与风险属性，未知数据不扣分，不可作为账号、支付、广告或合规决策的唯一依据。具体规则见仓库根目录 [`purity_module_spec.md`](../purity_module_spec.md)。
+本模块参考 Ping0 公开的风险、IP 类型、原生性与共享稳定性等概念，但不使用或伪称其专有人工 IP 段标注、Ping0 自有恶意行为信誉、共享人数、BGP / ASN / 企业历史或注册地历史。模块通过公开风险源补充 Proxy / VPN / Tor / 托管 / 攻击提示，并以独立规则形成分数；用户可选填 AbuseIPDB API Key 与 IPAPI.com Access Key，以加入授权风险信号。Key 通过 Android Keystore 的 AES-GCM 密钥加密保存在本机，未配置、超时或接口失败不扣分；自定义预留 Key 不联网。该分数仅反映本次检测时的公开出口一致性与风险属性，不可作为账号、支付、广告或合规决策的唯一依据。具体规则见仓库根目录 [`purity_module_spec.md`](../purity_module_spec.md)。
 
 ## 界面设计
 
