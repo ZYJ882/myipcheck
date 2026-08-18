@@ -75,10 +75,6 @@ AbuseIPDB 的原始分、报告数与时效，以及 ProxyCheck 的风险、置�
 
 ## 使用与开发
 
-### 获取已发布版本
-
-请在仓库的 [Releases 页面](https://github.com/ZYJ882/myipcheck/releases) 获取当前发布的签名 APK 和各版本的功能变更。Release 说明只记录该版本实际功能变化；不会重复展示固定的安装包或覆盖安装说明。
-
 ### 本地构建
 
 使用 Android Studio 打开 [`android`](android) 目录，并准备 JDK 17 与 Android SDK 35；也可在终端执行：
@@ -90,11 +86,9 @@ cd android
 
 调试 APK 会生成在 `android/app/build/outputs/apk/debug/app-debug.apk`。详细 Android 模块说明见 [`android/README.md`](android/README.md)。
 
-## 自动构建与发布
+## 自动化开发流程
 
-仓库已经包含 [Android 自动发布工作流](.github/workflows/android-release.yml)。将完整 Android 源码压缩包提交到 [`uploads/`](uploads/) 目录后，GitHub Actions 会选择最新压缩包、规范化到 `android/`、构建签名 APK、校验签名与包元数据、递增版本并创建新的 GitHub Release。
-
-压缩包可使用 ZIP、TAR、TAR.GZ 或 TGZ，内部需包含可构建的 Gradle 工程，例如 `settings.gradle.kts`、`build.gradle.kts` 和 `app/` 目录；允许外面再包一层目录。详细约定见 [`uploads/README.md`](uploads/README.md)。
+仓库保留 [Android 自动化工作流](.github/workflows/android-release.yml) 供维护者处理源码压缩包。压缩包可使用 ZIP、TAR、TAR.GZ 或 TGZ，内部需包含可构建的 Gradle 工程，例如 `settings.gradle.kts`、`build.gradle.kts` 和 `app/` 目录；详细约定见 [`uploads/README.md`](uploads/README.md)。
 
 ## 网络与隐私
 
