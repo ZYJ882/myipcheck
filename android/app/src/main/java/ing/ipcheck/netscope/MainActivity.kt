@@ -212,10 +212,19 @@ private data class PuritySignal(
     val tone: PurityTone
 )
 
+private data class PurityRiskBucket(
+    val title: String,
+    val risk: Int,
+    val cap: Int,
+    val detail: String
+)
+
 private data class PurityReport(
     val score: Int,
+    val risk: Int,
     val label: String,
     val summary: String,
+    val buckets: List<PurityRiskBucket>,
     val signals: List<PuritySignal>,
     val checkedAt: String
 )
@@ -931,9 +940,16 @@ private fun PurityDiagnosisCard(
                             Text(report.summary, fontSize = 12.sp, color = MutedInk, lineHeight = 18.sp)
                         }
                     }
-                    Spacer(Modifier.height(14.dp))
+                    Spacer(Modifier.height(12.dp))
+                    Text("本次已识别风险：${report.risk} / 100；同类证据已在类别内去重。", fontSize = 11.sp, color = MutedInk)
+                    Spacer(Modifier.height(9.dp))
+                    report.buckets.forEach { bucket ->
+                        PurityRiskBucketLine(bucket)
+                    }
+                    Spacer(Modifier.height(8.dp))
                     HorizontalDivider(color = Border)
                     Spacer(Modifier.height(5.dp))
+                    Text("证据明细", fontWeight = FontWeight.SemiBold, fontSize = 12.sp, color = Ink)
                     report.signals.forEachIndexed { index, signal ->
                         PuritySignalLine(signal)
                         if (index < report.signals.lastIndex) HorizontalDivider(color = Border, modifier = Modifier.padding(start = 28.dp))
@@ -941,7 +957,7 @@ private fun PurityDiagnosisCard(
                     Spacer(Modifier.height(10.dp))
                     Text("检测时间：${report.checkedAt}", fontSize = 11.sp, color = MutedInk)
                     Spacer(Modifier.height(7.dp))
-                    Text("说明：本报告仅查询当前公网出口的公开风险与一致性信号，不读取账号、Cookie、浏览记录或设备指纹。分数不是 Ping0 风控值，不包含专有 IP 段标注、共享人数或历史信誉数据。", fontSize = 11.sp, color = MutedInk, lineHeight = 16.sp)
+                    Text("说明：本报告仅查询当前公网出口的公开风险与一致性信号，不读取账号、Cookie、浏览记录或设备指纹。该分数是可解释的风险信号指数，不是欺诈概率，也不是任何第三方服务的专有风控值。", fontSize = 11.sp, color = MutedInk, lineHeight = 16.sp)
                 }
             }
             else -> {
@@ -962,6 +978,48 @@ private fun PurityDiagnosisCard(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun PurityRiskBucketLine(bucket: PurityRiskBucket) {
+    val tone = when {
+        bucket.risk == 0 -> PurityTone.CONSISTENT
+        bucket.risk * 2 >= bucket.cap -> PurityTone.NOTICE
+        else -> PurityTone.NEUTRAL
+    }
+    val color = when (tone) {
+        PurityTone.CONSISTENT -> Green
+        PurityTone.NOTICE -> Amber
+        PurityTone.NEUTRAL -> MutedInk
+    }
+    val background = when (tone) {
+        PurityTone.CONSISTENT -> SoftGreen
+        PurityTone.NOTICE -> SoftAmber
+        PurityTone.NEUTRAL -> Color(0xFFF0F3F5)
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier.size(20.dp).clip(RoundedCornerShape(6.dp)).background(background),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = if (bucket.risk == 0) Icons.Outlined.CheckCircle else Icons.Outlined.Info,
+                contentDescription = null,
+                tint = color,
+                modifier = Modifier.size(13.dp)
+            )
+        }
+        Spacer(Modifier.width(8.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(bucket.title, fontWeight = FontWeight.SemiBold, fontSize = 11.sp, color = Ink)
+            Text(bucket.detail, fontSize = 10.sp, color = MutedInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Spacer(Modifier.width(8.dp))
+        Text("${bucket.risk} / ${bucket.cap}", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = color)
     }
 }
 
@@ -1574,177 +1632,171 @@ private object NetworkRepository {
             throw IllegalStateException("公开 IP 属性数据源暂不可用")
         }
 
-        val signals = mutableListOf<PuritySignal>()
-        var score = 100
+        fun scaleProxyCheck(raw: Int, applies: Boolean): Int {
+            if (!applies) return raw
+            return when (externalRisk?.confidence) {
+                null -> raw
+                in 0..49 -> (raw * 0.45).toInt()
+                in 50..79 -> (raw * 0.70).toInt()
+                else -> raw
+            }
+        }
 
-        if (ipWhoIs != null) {
-            val sameIp = ipv4 == ipWhoIs.ip
-            if (!sameIp) score -= 35
-            signals += PuritySignal(
-                title = "多源出口一致性",
-                value = if (sameIp) "一致" else "不一致",
-                detail = "api.ipify.org：$ipv4；ipwho.is：${ipWhoIs.ip}",
-                tone = if (sameIp) PurityTone.CONSISTENT else PurityTone.NOTICE
-            )
-        } else {
-            signals += PuritySignal("多源出口一致性", "未覆盖", "ipwho.is 暂不可用，本次不扣分", PurityTone.NEUTRAL)
+        fun abuseScoreRisk(score: Int): Int = when (score) {
+            in 90..100 -> 35
+            in 75..89 -> 28
+            in 50..74 -> 18
+            in 25..49 -> 8
+            else -> 0
+        }
+
+        fun supplierRisk(score: Int?): Int = when (score ?: -1) {
+            in 75..100 -> 15
+            in 50..74 -> 10
+            in 25..49 -> 5
+            else -> 0
+        }
+
+        val signals = mutableListOf<PuritySignal>()
+        val sameIp = ipWhoIs?.let { it.ip == ipv4 }
+        val integrityRisk = if (sameIp == false) 8 else 0
+        signals += when (sameIp) {
+            true -> PuritySignal("多源出口一致性", "一致", "api.ipify.org 与 ipwho.is 返回同一 IPv4；不计风险", PurityTone.CONSISTENT)
+            false -> PuritySignal("多源出口一致性", "不一致", "api.ipify.org：$ipv4；ipwho.is：${ipWhoIs?.ip}；观测完整性桶计 8 / 8", PurityTone.NOTICE)
+            null -> PuritySignal("多源出口一致性", "未覆盖", "ipwho.is 暂不可用；不因缺失扣分", PurityTone.NEUTRAL)
         }
 
         if (ipApi != null && ipWhoIs != null && ipApi.countryCode.isNotBlank() && ipWhoIs.countryCode.isNotBlank()) {
             val sameCountry = ipApi.countryCode.equals(ipWhoIs.countryCode, ignoreCase = true)
-            if (!sameCountry) score -= 15
             signals += PuritySignal(
-                title = "多源地理一致性",
-                value = if (sameCountry) "一致" else "提示",
-                detail = "ipapi.co：${ipApi.countryCode}；ipwho.is：${ipWhoIs.countryCode}",
-                tone = if (sameCountry) PurityTone.CONSISTENT else PurityTone.NOTICE
+                "多源地理一致性",
+                if (sameCountry) "一致" else "差异仅提示",
+                "ipapi.co：${ipApi.countryCode}；ipwho.is：${ipWhoIs.countryCode}；地理库差异不参与风险评分",
+                if (sameCountry) PurityTone.CONSISTENT else PurityTone.NEUTRAL
             )
         } else {
-            signals += PuritySignal("多源地理一致性", "未覆盖", "至少一个公开数据源未返回国家代码，本次不扣分", PurityTone.NEUTRAL)
+            signals += PuritySignal("多源地理一致性", "未覆盖", "至少一个公开地理源未返回国家代码；不因缺失扣分", PurityTone.NEUTRAL)
         }
 
         if (ipv6 != null && ipv6Geo != null && ipApi != null && ipv6Geo.countryCode.isNotBlank() && ipApi.countryCode.isNotBlank()) {
             val sameCountry = ipApi.countryCode.equals(ipv6Geo.countryCode, ignoreCase = true)
-            if (!sameCountry) score -= 15
             signals += PuritySignal(
-                title = "IPv4 / IPv6 位置",
-                value = if (sameCountry) "一致" else "提示",
-                detail = "IPv4：${ipApi.countryCode}；IPv6：${ipv6Geo.countryCode}",
-                tone = if (sameCountry) PurityTone.CONSISTENT else PurityTone.NOTICE
+                "IPv4 / IPv6 位置",
+                if (sameCountry) "一致" else "差异仅提示",
+                "IPv4：${ipApi.countryCode}；IPv6：${ipv6Geo.countryCode}；双栈出口差异不参与风险评分",
+                if (sameCountry) PurityTone.CONSISTENT else PurityTone.NEUTRAL
             )
         } else {
-            signals += PuritySignal("IPv4 / IPv6 位置", "未覆盖", "未检测到双栈出口或 IPv6 地理属性，本次不扣分", PurityTone.NEUTRAL)
+            signals += PuritySignal("IPv4 / IPv6 位置", "未覆盖", "未检测到双栈出口或 IPv6 地理属性；不因缺失扣分", PurityTone.NEUTRAL)
         }
 
-        val metadata = ipApi ?: ipWhoIs
-        if (metadata != null && (metadata.asn.isNotBlank() || metadata.organization.isNotBlank())) {
-            val hosted = isLikelyHostedNetwork(metadata.asn, metadata.organization)
-            if (hosted) score -= 8
-            signals += PuritySignal(
-                title = "公开网络属性",
-                value = if (hosted) "托管提示" else "已读取",
-                detail = listOf(metadata.asn, metadata.organization).filter { it.isNotBlank() }.joinToString(" · "),
-                tone = if (hosted) PurityTone.NOTICE else PurityTone.CONSISTENT
-            )
-        } else {
-            signals += PuritySignal("公开网络属性", "未覆盖", "ASN / 组织字段不可用，本次不扣分", PurityTone.NEUTRAL)
+        val torFromOfficial = torProjectResult == true
+        val torFromOtherSources = (externalRisk?.tor == true) || (abuseRisk?.isTor == true) || (ipApiIsSecurity?.isTor == true)
+        val proxySources = listOf(externalRisk?.proxy == true, ipApiIsSecurity?.isProxy == true).count { it }
+        val vpnSources = listOf(externalRisk?.vpn == true, ipApiIsSecurity?.isVpn == true).count { it }
+        val anonymousCoverage = externalRisk != null || abuseRisk != null || ipApiIsSecurity != null || torProjectResult != null
+        val anonymityRisk = when {
+            torFromOfficial -> 45
+            torFromOtherSources -> 42
+            proxySources >= 2 -> 38
+            proxySources == 1 -> scaleProxyCheck(32, externalRisk?.proxy == true)
+            vpnSources >= 2 -> 30
+            vpnSources == 1 -> scaleProxyCheck(25, externalRisk?.vpn == true)
+            else -> 0
+        }.coerceIn(0, 45)
+        val anonymityFlags = buildList {
+            if (torFromOfficial) add("Tor 官方确认")
+            else if (torFromOtherSources) add("Tor 标记")
+            if (!torFromOfficial && !torFromOtherSources && proxySources > 0) add("代理${if (proxySources >= 2) "（双源）" else ""}")
+            if (!torFromOfficial && !torFromOtherSources && proxySources == 0 && vpnSources > 0) add("VPN${if (vpnSources >= 2) "（双源）" else ""}")
+            if (externalRisk?.anonymous == true && isEmpty()) add("匿名标记（未单独计分）")
         }
-
-        var torPenaltyApplied = false
-        if (externalRisk != null) {
-            val riskPenalty = when (externalRisk.risk ?: -1) {
-                in 75..100 -> 25
-                in 50..74 -> 16
-                in 25..49 -> 8
-                else -> 0
+        signals += PuritySignal(
+            "匿名化网络",
+            when {
+                !anonymousCoverage -> "未覆盖"
+                anonymityFlags.isEmpty() -> "未检出"
+                else -> anonymityFlags.joinToString("、")
+            },
+            when {
+                !anonymousCoverage -> "相关数据源暂不可用；不因缺失扣分"
+                anonymityRisk == 0 -> "已覆盖的来源未返回 Tor、代理或 VPN 标记"
+                else -> "同类 Tor / 代理 / VPN 只取最强结论；匿名化风险桶计 $anonymityRisk / 45"
+            },
+            when {
+                !anonymousCoverage -> PurityTone.NEUTRAL
+                anonymityRisk > 0 -> PurityTone.NOTICE
+                else -> PurityTone.CONSISTENT
             }
-            score -= riskPenalty
-            val riskText = externalRisk.risk?.let { "$it / 100" } ?: "未返回"
-            signals += PuritySignal(
-                title = "公开风险评分",
-                value = riskText,
-                detail = "${externalRisk.source} 置信度：${externalRisk.confidence?.let { "$it%" } ?: "未返回"}${if (riskPenalty > 0) "；已按公开规则扣 $riskPenalty 分" else "；本项不扣分"}",
-                tone = if (riskPenalty > 0) PurityTone.NOTICE else PurityTone.CONSISTENT
-            )
+        )
 
-            val relayFlags = buildList {
-                if (externalRisk.proxy) add("代理")
-                if (externalRisk.vpn) add("VPN")
-                if (externalRisk.tor) add("Tor")
-                if (externalRisk.anonymous) add("匿名")
-            }
-            val relayPenalty = (if (externalRisk.proxy) 18 else 0) + (if (externalRisk.vpn) 12 else 0) + (if (externalRisk.tor) 30 else 0)
-            score -= relayPenalty
-            if (externalRisk.tor) torPenaltyApplied = true
-            signals += PuritySignal(
-                title = "代理 / VPN / Tor",
-                value = if (relayFlags.isEmpty()) "未检出" else relayFlags.joinToString("、"),
-                detail = if (relayFlags.isEmpty()) "${externalRisk.source} 未返回代理、VPN 或 Tor 标记" else "${externalRisk.source} 明确标记；已按公开规则扣 $relayPenalty 分",
-                tone = if (relayFlags.isEmpty()) PurityTone.CONSISTENT else PurityTone.NOTICE
-            )
-
-            val attackPenalty = (if (externalRisk.compromised) 18 else 0) + (if (externalRisk.scraper) 10 else 0)
-            score -= attackPenalty
-            val attackFlags = buildList {
-                if (externalRisk.compromised) add("受损")
-                if (externalRisk.scraper) add("爬虫")
-            }
-            signals += PuritySignal(
-                title = "公开攻击提示",
-                value = if (attackFlags.isEmpty()) "未检出" else attackFlags.joinToString("、"),
-                detail = when {
-                    attackFlags.isNotEmpty() -> "${externalRisk.source}：${externalRisk.attackSummary.ifBlank { "无附加摘要" }}；已扣 $attackPenalty 分"
-                    externalRisk.attackSummary.isNotBlank() -> externalRisk.attackSummary
-                    else -> "${externalRisk.source} 未返回受损或爬虫标记"
-                },
-                tone = if (attackFlags.isEmpty()) PurityTone.CONSISTENT else PurityTone.NOTICE
-            )
-
-            if (externalRisk.hosting) score -= 6
-            signals += PuritySignal(
-                title = "风险源托管属性",
-                value = if (externalRisk.hosting) "托管提示" else "未标记",
-                detail = if (externalRisk.hosting) "${externalRisk.source} 将当前出口标记为托管网络；已扣 6 分" else "${externalRisk.source} 未标记托管网络",
-                tone = if (externalRisk.hosting) PurityTone.NOTICE else PurityTone.CONSISTENT
-            )
-        } else {
-            signals += PuritySignal("公开风险源", "未覆盖", "风险数据源暂不可用，本次不扣分", PurityTone.NEUTRAL)
+        val abuseFromScore = abuseRisk?.let { abuseScoreRisk(it.confidenceScore) } ?: 0
+        val proxyCheckRisk = supplierRisk(externalRisk?.risk)
+        val compromised = externalRisk?.compromised == true
+        val abuser = ipApiIsSecurity?.isAbuser == true
+        val crawler = externalRisk?.scraper == true || ipApiIsSecurity?.isCrawler == true
+        val directAttackRisk = when {
+            compromised && abuser -> 24
+            compromised -> 20
+            abuser -> 18
+            crawler -> 6
+            else -> 0
         }
-
-        if (torProjectResult == true) {
-            val wasAlreadyScored = torPenaltyApplied
-            if (!torPenaltyApplied) score -= 30
-            torPenaltyApplied = true
-            signals += PuritySignal(
-                title = "Tor 官方出口验证",
-                value = "Tor 出口",
-                detail = if (wasAlreadyScored) "Tor Project 官方接口确认；已由其他 Tor 证据计分，未重复扣分" else "Tor Project 官方接口确认；已扣 30 分",
-                tone = PurityTone.NOTICE
-            )
-        } else if (torProjectResult == false) {
-            signals += PuritySignal("Tor 官方出口验证", "未检出", "Tor Project 官方接口未将当前出口识别为 Tor", PurityTone.CONSISTENT)
-        } else {
-            signals += PuritySignal("Tor 官方出口验证", "未覆盖", "Tor Project 接口暂不可用，本次不扣分", PurityTone.NEUTRAL)
+        var abuseAndAttackRisk = maxOf(abuseFromScore, proxyCheckRisk, directAttackRisk)
+        if (crawler && abuseAndAttackRisk > 6) abuseAndAttackRisk = minOf(40, abuseAndAttackRisk + 4)
+        val independentAbuseEvidence = listOf(
+            abuseFromScore > 0,
+            externalRisk?.let { it.compromised || (it.risk ?: 0) >= 25 } == true,
+            abuser
+        ).count { it }
+        if (independentAbuseEvidence >= 2) abuseAndAttackRisk = minOf(40, abuseAndAttackRisk + 4)
+        val abuseCoverage = externalRisk != null || abuseRisk != null || ipApiIsSecurity != null
+        val abuseFlags = buildList {
+            if (abuseRisk != null) add("AbuseIPDB ${abuseRisk.confidenceScore}")
+            if (externalRisk?.risk != null) add("ProxyCheck ${externalRisk.risk}")
+            if (compromised) add("受损")
+            if (abuser) add("滥用")
+            if (crawler) add("爬虫")
         }
+        signals += PuritySignal(
+            "滥用与攻击证据",
+            when {
+                !abuseCoverage -> "未覆盖"
+                abuseFlags.isEmpty() -> "未检出"
+                else -> abuseFlags.joinToString("、")
+            },
+            when {
+                !abuseCoverage -> "风险数据源未覆盖；不因缺失扣分"
+                abuseAndAttackRisk == 0 -> "已覆盖来源未返回达到阈值的滥用或攻击信号"
+                else -> "同类供应商结果取最高值；独立来源仅作有限交叉验证；风险桶计 $abuseAndAttackRisk / 40"
+            },
+            when {
+                !abuseCoverage -> PurityTone.NEUTRAL
+                abuseAndAttackRisk > 0 -> PurityTone.NOTICE
+                else -> PurityTone.CONSISTENT
+            }
+        )
 
         if (apiKeys.abuseIpDbKey.isBlank()) {
-            signals += PuritySignal("AbuseIPDB 授权风险", "未配置", "填写本机 Key 后才查询 abuseConfidenceScore；本次不扣分", PurityTone.NEUTRAL)
+            signals += PuritySignal("AbuseIPDB 授权来源", "未配置", "填写本机 Key 后才查询 abuseConfidenceScore、报告数、Tor 与使用类型；不因未配置扣分", PurityTone.NEUTRAL)
         } else if (abuseRisk == null) {
-            signals += PuritySignal("AbuseIPDB 授权风险", "未覆盖", "授权接口未返回可用结果，本次不扣分", PurityTone.NEUTRAL)
+            signals += PuritySignal("AbuseIPDB 授权来源", "未覆盖", "授权接口未返回可用结果；不因接口失败扣分", PurityTone.NEUTRAL)
         } else {
-            val abusePenalty = when (abuseRisk.confidenceScore) {
-                in 75..100 -> 25
-                in 50..74 -> 16
-                in 25..49 -> 8
-                else -> 0
-            }
-            score -= abusePenalty
-            val torPenalty = if (abuseRisk.isTor && !torPenaltyApplied) 30 else 0
-            score -= torPenalty
-            if (abuseRisk.isTor) torPenaltyApplied = true
             signals += PuritySignal(
-                title = "AbuseIPDB 授权风险",
-                value = "${abuseRisk.confidenceScore} / 100",
-                detail = "报告：${abuseRisk.totalReports}；类型：${abuseRisk.usageType.ifBlank { "未返回" }}；最近报告：${abuseRisk.lastReportedAt.ifBlank { "未返回" }}${if (abuseRisk.isTor) "；Tor${if (torPenalty == 0) " 已由其他来源计分" else " 扣 $torPenalty 分"}" else ""}${if (abusePenalty > 0) "；风险分扣 $abusePenalty 分" else "；本项不扣分"}",
-                tone = if (abusePenalty > 0 || abuseRisk.isTor) PurityTone.NOTICE else PurityTone.CONSISTENT
+                "AbuseIPDB 授权来源",
+                "${abuseRisk.confidenceScore} / 100",
+                "报告：${abuseRisk.totalReports}；类型：${abuseRisk.usageType.ifBlank { "未返回" }}；最近报告：${abuseRisk.lastReportedAt.ifBlank { "未返回" }}；作为滥用桶证据，不与同类分数线性相加",
+                if (abuseFromScore > 0 || abuseRisk.isTor) PurityTone.NOTICE else PurityTone.CONSISTENT
             )
         }
 
         if (apiKeys.ipApiKey.isBlank()) {
-            signals += PuritySignal("ipapi.is 授权安全", "未配置", "填写 ipapi.is Key 后才查询 VPN、代理、Tor、托管与滥用字段；本次不扣分", PurityTone.NEUTRAL)
+            signals += PuritySignal("ipapi.is 授权来源", "未配置", "填写本机 Key 后才查询 VPN、代理、Tor、托管、滥用与爬虫字段；不因未配置扣分", PurityTone.NEUTRAL)
         } else if (ipApiIsSecurity == null) {
-            signals += PuritySignal("ipapi.is 授权安全", "未覆盖", "授权接口未返回可用结果，本次不扣分", PurityTone.NEUTRAL)
+            signals += PuritySignal("ipapi.is 授权来源", "未覆盖", "授权接口未返回可用结果；不因接口失败扣分", PurityTone.NEUTRAL)
         } else {
-            val flagPenalty = (if (ipApiIsSecurity.isDatacenter) 6 else 0) +
-                (if (ipApiIsSecurity.isProxy) 18 else 0) +
-                (if (ipApiIsSecurity.isVpn) 12 else 0) +
-                (if (ipApiIsSecurity.isCrawler) 10 else 0) +
-                (if (ipApiIsSecurity.isAbuser) 18 else 0) +
-                (if (ipApiIsSecurity.isTor && !torPenaltyApplied) 30 else 0)
-            score -= flagPenalty
-            if (ipApiIsSecurity.isTor) torPenaltyApplied = true
             val flags = buildList {
-                if (ipApiIsSecurity.isDatacenter) add("托管")
+                if (ipApiIsSecurity.isDatacenter) add("数据中心")
                 if (ipApiIsSecurity.isProxy) add("代理")
                 if (ipApiIsSecurity.isVpn) add("VPN")
                 if (ipApiIsSecurity.isCrawler) add("爬虫")
@@ -1752,41 +1804,84 @@ private object NetworkRepository {
                 if (ipApiIsSecurity.isAbuser) add("滥用")
             }
             val identity = listOf(ipApiIsSecurity.companyName, ipApiIsSecurity.asnOrganization)
-                .filter { it.isNotBlank() }
-                .distinct()
-                .joinToString(" · ")
+                .filter { it.isNotBlank() }.distinct().joinToString(" · ")
             signals += PuritySignal(
-                title = "ipapi.is 授权安全",
-                value = if (flags.isEmpty()) "未检出" else flags.joinToString("、"),
-                detail = "${if (identity.isBlank()) "未返回公司 / ASN" else identity}${if (ipApiIsSecurity.hasManagedEgress) "；受管理出口：${ipApiIsSecurity.egressSummary.ifBlank { "是" }}" else ""}${if (flagPenalty > 0) "；已扣 $flagPenalty 分" else "；本项不扣分"}",
-                tone = if (flagPenalty > 0) PurityTone.NOTICE else PurityTone.CONSISTENT
+                "ipapi.is 授权来源",
+                if (flags.isEmpty()) "未检出" else flags.joinToString("、"),
+                "${if (identity.isBlank()) "未返回公司 / ASN" else identity}${if (ipApiIsSecurity.hasManagedEgress) "；受管理出口：${ipApiIsSecurity.egressSummary.ifBlank { "是" }}（仅说明）" else ""}；同类信号在风险桶内去重",
+                if (flags.isEmpty()) PurityTone.CONSISTENT else PurityTone.NOTICE
             )
         }
 
-        val privacy = inspectPrivacy(context)
+        val metadata = ipApi ?: ipWhoIs
+        val heuristicHosting = metadata?.let { isLikelyHostedNetwork(it.asn, it.organization) } == true
+        val hostingSourceCount = listOf(externalRisk?.hosting == true, ipApiIsSecurity?.isDatacenter == true).count { it }
+        val infrastructureRisk = when {
+            hostingSourceCount >= 2 -> 12
+            hostingSourceCount == 1 -> 7
+            heuristicHosting -> 3
+            else -> 0
+        }
+        val infrastructureCoverage = metadata != null || externalRisk != null || ipApiIsSecurity != null
+        val infrastructureFlags = buildList {
+            if (hostingSourceCount >= 2) add("双源托管 / 数据中心")
+            else if (hostingSourceCount == 1) add("直接托管 / 数据中心")
+            else if (heuristicHosting) add("ASN / 组织启发式")
+            if (ipApiIsSecurity?.hasManagedEgress == true) add("受管理出口（仅说明）")
+        }
         signals += PuritySignal(
-            title = "Android 网络状态",
-            value = if (privacy.vpnActive) "VPN 已连接" else "未检测到 VPN",
-            detail = "Private DNS：${privacy.privateDnsMode}${if (privacy.dnsServers.isNotEmpty()) "；DNS：${privacy.dnsServers.take(2).joinToString("、")}" else ""}",
-            tone = PurityTone.NEUTRAL
+            "托管与基础设施",
+            when {
+                !infrastructureCoverage -> "未覆盖"
+                infrastructureFlags.isEmpty() -> "未标记"
+                else -> infrastructureFlags.joinToString("、")
+            },
+            when {
+                !infrastructureCoverage -> "ASN、组织或风险来源暂不可用；不因缺失扣分"
+                infrastructureRisk == 0 -> "已覆盖来源未把当前出口标为托管或数据中心"
+                else -> "托管不等于恶意；基础设施风险桶计 $infrastructureRisk / 12"
+            },
+            when {
+                !infrastructureCoverage -> PurityTone.NEUTRAL
+                infrastructureRisk > 0 -> PurityTone.NOTICE
+                else -> PurityTone.CONSISTENT
+            }
         )
 
-        score = score.coerceIn(0, 100)
+        val privacy = inspectPrivacy(context)
+        signals += PuritySignal(
+            "Android 网络状态",
+            if (privacy.vpnActive) "VPN 已连接" else "未检测到 VPN",
+            "Private DNS：${privacy.privateDnsMode}${if (privacy.dnsServers.isNotEmpty()) "；DNS：${privacy.dnsServers.take(2).joinToString("、")}" else ""}；系统状态只展示，不参与风险评分",
+            PurityTone.NEUTRAL
+        )
+
+        val buckets = listOf(
+            PurityRiskBucket("匿名化网络", anonymityRisk, 45, "Tor、代理与 VPN 只取最强同类证据"),
+            PurityRiskBucket("滥用与攻击", abuseAndAttackRisk, 40, "供应商风险、滥用与攻击信号去重并封顶"),
+            PurityRiskBucket("托管基础设施", infrastructureRisk, 12, "托管并非恶意；仅作有限提示"),
+            PurityRiskBucket("观测完整性", integrityRisk, 8, "仅本机出口 IP 冲突计分；地理差异不计分")
+        )
+        val totalRisk = buckets.sumOf { it.risk }.coerceIn(0, 100)
+        val score = 100 - totalRisk
         val label = when {
-            score >= 90 -> "出口一致"
-            score >= 70 -> "轻度提示"
-            score >= 40 -> "存在明显风险或不一致"
+            totalRisk <= 10 -> "低风险信号"
+            totalRisk <= 30 -> "轻度提示"
+            totalRisk <= 60 -> "需复核"
             else -> "高风险提示"
         }
         val summary = when {
-            score >= 90 -> "公开数据源的当前出口信息基本一致。"
-            score >= 70 -> "发现可解释的网络属性提示，建议结合实际网络配置复检。"
-            else -> "发现多个公开风险或出口不一致信号，建议检查代理、VPN、双栈和分流配置。"
+            totalRisk <= 10 -> "本次已覆盖的公开来源中未见明显风险信号；未覆盖不代表安全结论。"
+            totalRisk <= 30 -> "发现有限、可解释的网络属性或行为提示，建议结合实际网络配置复检。"
+            totalRisk <= 60 -> "发现较强的匿名化、滥用或出口观测信号；建议检查代理、VPN、双栈和分流配置。"
+            else -> "多个独立风险桶同时命中；仅作当前公网出口风险提示，不能单独推断个人或账号行为。"
         }
         return PurityReport(
             score = score,
+            risk = totalRisk,
             label = label,
             summary = summary,
+            buckets = buckets,
             signals = signals,
             checkedAt = LocalDateTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"))
         )
