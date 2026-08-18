@@ -104,8 +104,15 @@ import java.net.InetSocketAddress
 import java.net.Socket
 import java.net.URL
 import java.net.URLEncoder
+import java.time.Duration
+import java.time.Instant
 import java.time.LocalDateTime
+import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
+import kotlin.math.exp
+import kotlin.math.ln
+import kotlin.math.pow
+import kotlin.math.roundToInt
 import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -214,20 +221,22 @@ private data class PuritySignal(
 
 private data class PurityRiskBucket(
     val title: String,
-    val risk: Int,
-    val cap: Int,
+    val risk: Double,
+    val cap: Double,
     val detail: String
 )
 
 private data class PurityReport(
-    val score: Int,
-    val risk: Int,
+    val score: Double,
+    val risk: Double,
     val label: String,
     val summary: String,
     val buckets: List<PurityRiskBucket>,
     val signals: List<PuritySignal>,
     val checkedAt: String
 )
+
+private fun formatRisk(value: Double): String = String.format(java.util.Locale.US, "%.1f", value)
 
 private data class PublicGeoProbe(
     val source: String,
@@ -249,6 +258,9 @@ private data class RiskIntelligence(
     val anonymous: Boolean,
     val risk: Int?,
     val confidence: Int?,
+    val detectionFirstSeen: String,
+    val detectionLastSeen: String,
+    val attackEventCount: Int,
     val attackSummary: String
 )
 
@@ -926,11 +938,11 @@ private fun PurityDiagnosisCard(
                 Column(modifier = Modifier.padding(17.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(
-                            modifier = Modifier.size(58.dp).clip(RoundedCornerShape(18.dp)).background(scoreBackground),
+                            modifier = Modifier.size(64.dp).clip(RoundedCornerShape(18.dp)).background(scoreBackground),
                             contentAlignment = Alignment.Center
                         ) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text("${report.score}", fontWeight = FontWeight.Bold, fontSize = 23.sp, color = scoreColor)
+                                Text(formatRisk(report.score), fontWeight = FontWeight.Bold, fontSize = 20.sp, color = scoreColor)
                                 Text("/ 100", fontSize = 9.sp, color = scoreColor)
                             }
                         }
@@ -941,7 +953,7 @@ private fun PurityDiagnosisCard(
                         }
                     }
                     Spacer(Modifier.height(12.dp))
-                    Text("本次已识别风险：${report.risk} / 100；同类证据已在类别内去重。", fontSize = 11.sp, color = MutedInk)
+                    Text("本次已识别风险：${formatRisk(report.risk)} / 100；同类证据已在类别内去重。", fontSize = 11.sp, color = MutedInk)
                     Spacer(Modifier.height(9.dp))
                     report.buckets.forEach { bucket ->
                         PurityRiskBucketLine(bucket)
@@ -984,7 +996,7 @@ private fun PurityDiagnosisCard(
 @Composable
 private fun PurityRiskBucketLine(bucket: PurityRiskBucket) {
     val tone = when {
-        bucket.risk == 0 -> PurityTone.CONSISTENT
+        bucket.risk == 0.0 -> PurityTone.CONSISTENT
         bucket.risk * 2 >= bucket.cap -> PurityTone.NOTICE
         else -> PurityTone.NEUTRAL
     }
@@ -1007,7 +1019,7 @@ private fun PurityRiskBucketLine(bucket: PurityRiskBucket) {
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                imageVector = if (bucket.risk == 0) Icons.Outlined.CheckCircle else Icons.Outlined.Info,
+                imageVector = if (bucket.risk == 0.0) Icons.Outlined.CheckCircle else Icons.Outlined.Info,
                 contentDescription = null,
                 tint = color,
                 modifier = Modifier.size(13.dp)
@@ -1019,7 +1031,7 @@ private fun PurityRiskBucketLine(bucket: PurityRiskBucket) {
             Text(bucket.detail, fontSize = 10.sp, color = MutedInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Spacer(Modifier.width(8.dp))
-        Text("${bucket.risk} / ${bucket.cap}", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = color)
+        Text("${formatRisk(bucket.risk)} / ${formatRisk(bucket.cap)}", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = color)
     }
 }
 
@@ -1632,34 +1644,37 @@ private object NetworkRepository {
             throw IllegalStateException("公开 IP 属性数据源暂不可用")
         }
 
-        fun scaleProxyCheck(raw: Int, applies: Boolean): Int {
-            if (!applies) return raw
-            return when (externalRisk?.confidence) {
-                null -> raw
-                in 0..49 -> (raw * 0.45).toInt()
-                in 50..79 -> (raw * 0.70).toInt()
-                else -> raw
-            }
+        fun ageDays(timestamp: String): Long? = runCatching {
+            Duration.between(OffsetDateTime.parse(timestamp).toInstant(), Instant.now()).toDays().coerceAtLeast(0)
+        }.getOrNull()
+
+        fun freshnessFactor(timestamp: String, fallback: Double = 0.70): Double {
+            val days = ageDays(timestamp) ?: return fallback
+            return (0.45 + 0.55 * exp(-days / 21.0)).coerceIn(0.45, 1.0)
         }
 
-        fun abuseScoreRisk(score: Int): Int = when (score) {
-            in 90..100 -> 35
-            in 75..89 -> 28
-            in 50..74 -> 18
-            in 25..49 -> 8
-            else -> 0
+        fun proxyCheckReliability(): Double {
+            val confidence = externalRisk?.confidence?.coerceIn(0, 100)?.div(100.0) ?: 0.60
+            return ((0.30 + 0.70 * confidence) * freshnessFactor(externalRisk?.detectionLastSeen.orEmpty())).coerceIn(0.25, 1.0)
         }
 
-        fun supplierRisk(score: Int?): Int = when (score ?: -1) {
-            in 75..100 -> 15
-            in 50..74 -> 10
-            in 25..49 -> 5
-            else -> 0
+        fun abuseScoreRisk(score: Int): Double = 34.0 * (score.coerceIn(0, 100) / 100.0).pow(1.35)
+
+        fun reportVolumeRisk(reports: Int): Double = 2.0 * ln(1.0 + reports.coerceAtLeast(0)) / ln(101.0)
+
+        fun vendorRisk(score: Int?): Double {
+            val raw = score?.coerceIn(0, 100) ?: return 0.0
+            return 16.0 * (raw / 100.0).pow(1.20) * proxyCheckReliability()
+        }
+
+        fun historyRisk(events: Int): Double {
+            if (events <= 0) return 0.0
+            return 4.0 * ln(1.0 + events) / ln(101.0) * proxyCheckReliability()
         }
 
         val signals = mutableListOf<PuritySignal>()
         val sameIp = ipWhoIs?.let { it.ip == ipv4 }
-        val integrityRisk = if (sameIp == false) 8 else 0
+        val integrityRisk = if (sameIp == false) 8.0 else 0.0
         signals += when (sameIp) {
             true -> PuritySignal("多源出口一致性", "一致", "api.ipify.org 与 ipwho.is 返回同一 IPv4；不计风险", PurityTone.CONSISTENT)
             false -> PuritySignal("多源出口一致性", "不一致", "api.ipify.org：$ipv4；ipwho.is：${ipWhoIs?.ip}；观测完整性桶计 8 / 8", PurityTone.NOTICE)
@@ -1695,15 +1710,24 @@ private object NetworkRepository {
         val proxySources = listOf(externalRisk?.proxy == true, ipApiIsSecurity?.isProxy == true).count { it }
         val vpnSources = listOf(externalRisk?.vpn == true, ipApiIsSecurity?.isVpn == true).count { it }
         val anonymousCoverage = externalRisk != null || abuseRisk != null || ipApiIsSecurity != null || torProjectResult != null
+        val proxyReliability = proxyCheckReliability()
+        val proxyRisk = when {
+            externalRisk?.proxy == true && ipApiIsSecurity?.isProxy == true -> maxOf(28.0, 32.0 * proxyReliability) + 6.0 * proxyReliability
+            externalRisk?.proxy == true -> 32.0 * proxyReliability
+            ipApiIsSecurity?.isProxy == true -> 28.0
+            else -> 0.0
+        }
+        val vpnRisk = when {
+            externalRisk?.vpn == true && ipApiIsSecurity?.isVpn == true -> maxOf(22.0, 25.0 * proxyReliability) + 5.0 * proxyReliability
+            externalRisk?.vpn == true -> 25.0 * proxyReliability
+            ipApiIsSecurity?.isVpn == true -> 22.0
+            else -> 0.0
+        }
         val anonymityRisk = when {
-            torFromOfficial -> 45
-            torFromOtherSources -> 42
-            proxySources >= 2 -> 38
-            proxySources == 1 -> scaleProxyCheck(32, externalRisk?.proxy == true)
-            vpnSources >= 2 -> 30
-            vpnSources == 1 -> scaleProxyCheck(25, externalRisk?.vpn == true)
-            else -> 0
-        }.coerceIn(0, 45)
+            torFromOfficial -> 45.0
+            torFromOtherSources -> if (externalRisk?.tor == true) 38.0 + 4.0 * proxyReliability else 38.0
+            else -> maxOf(proxyRisk, vpnRisk)
+        }.coerceIn(0.0, 45.0)
         val anonymityFlags = buildList {
             if (torFromOfficial) add("Tor 官方确认")
             else if (torFromOtherSources) add("Tor 标记")
@@ -1720,36 +1744,52 @@ private object NetworkRepository {
             },
             when {
                 !anonymousCoverage -> "相关数据源暂不可用；不因缺失扣分"
-                anonymityRisk == 0 -> "已覆盖的来源未返回 Tor、代理或 VPN 标记"
-                else -> "同类 Tor / 代理 / VPN 只取最强结论；匿名化风险桶计 $anonymityRisk / 45"
+                anonymityRisk == 0.0 -> "已覆盖的来源未返回 Tor、代理或 VPN 标记"
+                torFromOfficial -> "Tor Project 是二元官方确认；匿名化风险桶计 ${formatRisk(anonymityRisk)} / 45"
+                else -> "ProxyCheck 置信度 ${externalRisk?.confidence?.let { "$it%" } ?: "未返回"}、最近检出 ${externalRisk?.detectionLastSeen?.ifBlank { "未返回" } ?: "未返回"} 已连续缩放；同类只取最强结论；风险桶计 ${formatRisk(anonymityRisk)} / 45"
             },
             when {
                 !anonymousCoverage -> PurityTone.NEUTRAL
-                anonymityRisk > 0 -> PurityTone.NOTICE
+                anonymityRisk > 0.0 -> PurityTone.NOTICE
                 else -> PurityTone.CONSISTENT
             }
         )
 
-        val abuseFromScore = abuseRisk?.let { abuseScoreRisk(it.confidenceScore) } ?: 0
-        val proxyCheckRisk = supplierRisk(externalRisk?.risk)
+        val abuseBaseRisk = abuseRisk?.let { abuseScoreRisk(it.confidenceScore) } ?: 0.0
+        val abuseVolumeRisk = abuseRisk?.let { reportVolumeRisk(it.totalReports) } ?: 0.0
+        val abuseFreshnessRisk = abuseRisk?.takeIf { it.confidenceScore > 0 }?.let { 2.0 * freshnessFactor(it.lastReportedAt, 0.60) } ?: 0.0
+        val abuseFromScore = minOf(36.0, abuseBaseRisk + abuseVolumeRisk + abuseFreshnessRisk)
+        val proxyCheckRisk = vendorRisk(externalRisk?.risk)
         val compromised = externalRisk?.compromised == true
         val abuser = ipApiIsSecurity?.isAbuser == true
         val crawler = externalRisk?.scraper == true || ipApiIsSecurity?.isCrawler == true
-        val directAttackRisk = when {
-            compromised && abuser -> 24
-            compromised -> 20
-            abuser -> 18
-            crawler -> 6
-            else -> 0
+        val compromisedRisk = if (compromised) 12.0 + 8.0 * proxyReliability else 0.0
+        val abuserRisk = if (abuser) 16.0 else 0.0
+        val crawlerRisk = when {
+            externalRisk?.scraper == true -> 2.0 + 4.0 * proxyReliability
+            ipApiIsSecurity?.isCrawler == true -> 4.0
+            else -> 0.0
         }
-        var abuseAndAttackRisk = maxOf(abuseFromScore, proxyCheckRisk, directAttackRisk)
-        if (crawler && abuseAndAttackRisk > 6) abuseAndAttackRisk = minOf(40, abuseAndAttackRisk + 4)
-        val independentAbuseEvidence = listOf(
-            abuseFromScore > 0,
-            externalRisk?.let { it.compromised || (it.risk ?: 0) >= 25 } == true,
-            abuser
-        ).count { it }
-        if (independentAbuseEvidence >= 2) abuseAndAttackRisk = minOf(40, abuseAndAttackRisk + 4)
+        val directAttackRisk = minOf(
+            28.0,
+            maxOf(compromisedRisk, abuserRisk, crawlerRisk) +
+                (if (compromised && abuser) 3.0 else 0.0) +
+                historyRisk(externalRisk?.attackEventCount ?: 0)
+        )
+        val primaryAbuseRisk = maxOf(abuseFromScore, proxyCheckRisk, directAttackRisk)
+        val externalAttackStrength = maxOf(proxyCheckRisk / 16.0, compromisedRisk / 20.0)
+        val independentStrengths = listOf(
+            (abuseFromScore / 36.0).takeIf { abuseFromScore > 0.0 },
+            externalAttackStrength.takeIf { externalAttackStrength > 0.0 },
+            (abuserRisk / 16.0).takeIf { abuserRisk > 0.0 }
+        ).filterNotNull()
+        val corroborationBonus = if (independentStrengths.size >= 2) {
+            minOf(4.0, 1.0 + 3.0 * independentStrengths.average())
+        } else {
+            0.0
+        }
+        val crawlerIncrement = if (crawlerRisk > 0.0 && primaryAbuseRisk > crawlerRisk) minOf(4.0, crawlerRisk) else 0.0
+        val abuseAndAttackRisk = minOf(40.0, primaryAbuseRisk + corroborationBonus + crawlerIncrement)
         val abuseCoverage = externalRisk != null || abuseRisk != null || ipApiIsSecurity != null
         val abuseFlags = buildList {
             if (abuseRisk != null) add("AbuseIPDB ${abuseRisk.confidenceScore}")
@@ -1767,12 +1807,12 @@ private object NetworkRepository {
             },
             when {
                 !abuseCoverage -> "风险数据源未覆盖；不因缺失扣分"
-                abuseAndAttackRisk == 0 -> "已覆盖来源未返回达到阈值的滥用或攻击信号"
-                else -> "同类供应商结果取最高值；独立来源仅作有限交叉验证；风险桶计 $abuseAndAttackRisk / 40"
+                abuseAndAttackRisk == 0.0 -> "已覆盖来源未返回达到阈值的滥用或攻击信号"
+                else -> "AbuseIPDB ${abuseRisk?.confidenceScore ?: "未覆盖"}/100 → ${formatRisk(abuseFromScore)}；ProxyCheck ${externalRisk?.risk ?: "未覆盖"}/100 → ${formatRisk(proxyCheckRisk)}；攻击历史 ${externalRisk?.attackEventCount ?: 0} 次；独立证据增量 ${formatRisk(corroborationBonus)}；风险桶计 ${formatRisk(abuseAndAttackRisk)} / 40"
             },
             when {
                 !abuseCoverage -> PurityTone.NEUTRAL
-                abuseAndAttackRisk > 0 -> PurityTone.NOTICE
+                abuseAndAttackRisk > 0.0 -> PurityTone.NOTICE
                 else -> PurityTone.CONSISTENT
             }
         )
@@ -1815,17 +1855,17 @@ private object NetworkRepository {
 
         val metadata = ipApi ?: ipWhoIs
         val heuristicHosting = metadata?.let { isLikelyHostedNetwork(it.asn, it.organization) } == true
-        val hostingSourceCount = listOf(externalRisk?.hosting == true, ipApiIsSecurity?.isDatacenter == true).count { it }
-        val infrastructureRisk = when {
-            hostingSourceCount >= 2 -> 12
-            hostingSourceCount == 1 -> 7
-            heuristicHosting -> 3
-            else -> 0
-        }
+        val proxyCheckHostingRisk = if (externalRisk?.hosting == true) 4.0 + 3.0 * proxyReliability else 0.0
+        val ipApiHostingRisk = if (ipApiIsSecurity?.isDatacenter == true) 6.5 else 0.0
+        val hostingCorroboration = if (proxyCheckHostingRisk > 0.0 && ipApiHostingRisk > 0.0) 2.5 + 3.0 * proxyReliability else 0.0
+        val infrastructureRisk = minOf(
+            12.0,
+            maxOf(if (heuristicHosting) 3.0 else 0.0, proxyCheckHostingRisk, ipApiHostingRisk) + hostingCorroboration
+        )
         val infrastructureCoverage = metadata != null || externalRisk != null || ipApiIsSecurity != null
         val infrastructureFlags = buildList {
-            if (hostingSourceCount >= 2) add("双源托管 / 数据中心")
-            else if (hostingSourceCount == 1) add("直接托管 / 数据中心")
+            if (proxyCheckHostingRisk > 0.0 && ipApiHostingRisk > 0.0) add("双源托管 / 数据中心")
+            else if (proxyCheckHostingRisk > 0.0 || ipApiHostingRisk > 0.0) add("直接托管 / 数据中心")
             else if (heuristicHosting) add("ASN / 组织启发式")
             if (ipApiIsSecurity?.hasManagedEgress == true) add("受管理出口（仅说明）")
         }
@@ -1838,12 +1878,12 @@ private object NetworkRepository {
             },
             when {
                 !infrastructureCoverage -> "ASN、组织或风险来源暂不可用；不因缺失扣分"
-                infrastructureRisk == 0 -> "已覆盖来源未把当前出口标为托管或数据中心"
-                else -> "托管不等于恶意；基础设施风险桶计 $infrastructureRisk / 12"
+                infrastructureRisk == 0.0 -> "已覆盖来源未把当前出口标为托管或数据中心"
+                else -> "托管不等于恶意；ProxyCheck 置信度已连续缩放；基础设施风险桶计 ${formatRisk(infrastructureRisk)} / 12"
             },
             when {
                 !infrastructureCoverage -> PurityTone.NEUTRAL
-                infrastructureRisk > 0 -> PurityTone.NOTICE
+                infrastructureRisk > 0.0 -> PurityTone.NOTICE
                 else -> PurityTone.CONSISTENT
             }
         )
@@ -1857,12 +1897,12 @@ private object NetworkRepository {
         )
 
         val buckets = listOf(
-            PurityRiskBucket("匿名化网络", anonymityRisk, 45, "Tor、代理与 VPN 只取最强同类证据"),
-            PurityRiskBucket("滥用与攻击", abuseAndAttackRisk, 40, "供应商风险、滥用与攻击信号去重并封顶"),
-            PurityRiskBucket("托管基础设施", infrastructureRisk, 12, "托管并非恶意；仅作有限提示"),
-            PurityRiskBucket("观测完整性", integrityRisk, 8, "仅本机出口 IP 冲突计分；地理差异不计分")
+            PurityRiskBucket("匿名化网络", anonymityRisk, 45.0, "直接布尔确认取强结论；ProxyCheck 信号按置信度与时效缩放"),
+            PurityRiskBucket("滥用与攻击", abuseAndAttackRisk, 40.0, "原始分、报告量、时效、攻击历史和独立来源均连续计算"),
+            PurityRiskBucket("托管基础设施", infrastructureRisk, 12.0, "托管并非恶意；ProxyCheck 置信度缩放且严格封顶"),
+            PurityRiskBucket("观测完整性", integrityRisk, 8.0, "仅本机出口 IP 冲突计分；地理差异不计分")
         )
-        val totalRisk = buckets.sumOf { it.risk }.coerceIn(0, 100)
+        val totalRisk = buckets.sumOf { it.risk }.coerceIn(0.0, 100.0)
         val score = 100 - totalRisk
         val label = when {
             totalRisk <= 10 -> "低风险信号"
@@ -1975,12 +2015,14 @@ private object NetworkRepository {
         val detections = result.optJSONObject("detections")
         val attackHistory = result.optJSONObject("attack_history")
         val attacks = mutableListOf<String>()
+        var attackEventCount = 0
         if (attackHistory != null) {
             val keys = attackHistory.keys()
-            while (keys.hasNext() && attacks.size < 2) {
+            while (keys.hasNext()) {
                 val key = keys.next()
-                val count = attackHistory.optInt(key, 0)
-                if (count > 0) attacks += "${key.replace('_', ' ')}：$count"
+                val count = attackHistory.optInt(key, 0).coerceAtLeast(0)
+                attackEventCount += count
+                if (count > 0 && attacks.size < 2) attacks += "${key.replace('_', ' ')}：$count"
             }
         }
         fun intField(name: String): Int? = detections?.opt(name)?.toString()?.toIntOrNull()
@@ -1995,6 +2037,9 @@ private object NetworkRepository {
             anonymous = detections?.optBoolean("anonymous", false) ?: false,
             risk = intField("risk"),
             confidence = intField("confidence"),
+            detectionFirstSeen = detections?.stringOrBlank("first_seen").orEmpty(),
+            detectionLastSeen = detections?.stringOrBlank("last_seen").orEmpty(),
+            attackEventCount = attackEventCount,
             attackSummary = attacks.joinToString("；")
         )
     }

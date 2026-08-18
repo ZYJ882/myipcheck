@@ -29,7 +29,7 @@ MyIP 原项目和 IPCheck.ing 官网包含浏览器环境相关能力，例如 W
 
 Ping0 的公开说明将 IP 风控、实际使用类型、原生性、共享人数与历史稳定性作为判断 IP 纯净度的主要维度。[4] 其中人工 IP 段标注、共享人数、Ping0 自有恶意行为信誉、BGP / ASN / 企业 / 注册地历史属于持续维护的专有数据，Android 端不能诚实地复制。本项目因此实现 **增强纯净度诊断**：在公开可验证的多源出口、国家、双栈位置、ASN / 组织属性和 Android VPN / Private DNS 状态基础上，增加第三方公开 Proxy / VPN / Tor / 托管 / 攻击风险信号。未知、超时或不可获取的数据均显示为“未覆盖”，不会被当作风险扣分。
 
-> 该模块的 0–100 分是当前网络出口的一致性 / 独立风险提示，不是 Ping0 风控值，也不构成 IP 信誉、反欺诈、账号资格或业务合规结论。诊断仅按需查询当前公网 IP，不读取账号、Cookie、浏览记录或设备指纹；`proxycheck.io` 与 Tor Project 仅用于返回本次所需的少量风险结论。完整评分规则与未覆盖边界见 [`purity_module_spec.md`](purity_module_spec.md) 和 [`purity_data_sources_research.md`](purity_data_sources_research.md)。
+> 该模块的 0.0–100.0 分是当前网络出口的独立风险信号指数，不是 Ping0 风控值，也不构成 IP 信誉、反欺诈、账号资格或业务合规结论。AbuseIPDB 原始分、报告数与时效，以及 ProxyCheck 风险、置信度、最近检出时间和攻击历史均采用连续公式，因此原始值的小幅变化会反映在一位小数的总分中；底层 API 只返回“是 / 否”的 Tor、代理、VPN 等字段则采用公开、有限的事实权重，不伪造精确概率。诊断仅按需查询当前公网 IP，不读取账号、Cookie、浏览记录或设备指纹。完整公式、风险桶上限与未覆盖边界见 [`purity_scoring_model_v2.md`](purity_scoring_model_v2.md)、[`purity_module_spec.md`](purity_module_spec.md) 和 [`purity_data_sources_research.md`](purity_data_sources_research.md)。
 
 ### 授权 API Key
 
