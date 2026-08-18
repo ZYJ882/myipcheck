@@ -94,7 +94,7 @@ R = clamp((0.30 + 0.70 × c / 100) × F(最近检出日), 0.25, 1.00)
 
 诊断按需调用 `api.ipify.org`、`ipapi.co`、`ipwho.is`、`proxycheck.io` 和 Tor Project。用户自行配置 Key 后，APP 还会调用 AbuseIPDB APIv2 Check 与 ipapi.is 官方 JSON POST 端点。[2] [5] [6]
 
-调用仅使用当前公网 IP 或由服务自动观察到的请求来源 IP；APP 不传递账号、Cookie、浏览历史、设备指纹、位置权限或其他个人敏感信息。AbuseIPDB、ipapi.is 和自定义预留 Key 使用 Android Keystore 的 AES-GCM 密钥加密后仅存于本机；预留 Key 当前不会发送或参与评分。
+调用仅使用当前公网 IP 或由服务自动观察到的请求来源 IP；APP 不传递账号、Cookie、浏览历史、设备指纹、位置权限或其他个人敏感信息。AbuseIPDB、ipapi.is 以及成对配置的自定义 HTTPS 请求地址与 Key 使用 Android Keystore 的 AES-GCM 密钥加密后仅存于本机；自定义地址与 Key 当前不会发送或参与评分。
 
 这些权重是基于公开字段语义、分段和误报控制设计的**可解释先验**，不是经 MyIPCheck 用户行为训练的统计模型。后续只有在合法、最小化、经授权的真实结果数据下，才应通过校准曲线和观察事件率调整系数。[4]
 

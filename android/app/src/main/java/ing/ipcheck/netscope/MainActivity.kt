@@ -51,7 +51,9 @@ import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material.icons.outlined.SettingsEthernet
 import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material.icons.outlined.Storage
+import androidx.compose.material.icons.outlined.VpnKey
 import androidx.compose.material.icons.outlined.VpnLock
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
@@ -238,6 +240,12 @@ private data class PurityReport(
 
 private fun formatRisk(value: Double): String = String.format(java.util.Locale.US, "%.1f", value)
 
+private fun isHttpsEndpoint(value: String): Boolean {
+    if (value.isBlank()) return true
+    val uri = runCatching { Uri.parse(value.trim()) }.getOrNull() ?: return false
+    return uri.scheme.equals("https", ignoreCase = true) && !uri.host.isNullOrBlank()
+}
+
 private data class PublicGeoProbe(
     val source: String,
     val ip: String,
@@ -267,7 +275,8 @@ private data class RiskIntelligence(
 private data class ApiKeyConfig(
     val abuseIpDbKey: String = "",
     val ipApiKey: String = "",
-    val customKey: String = ""
+    val customKey: String = "",
+    val customEndpoint: String = ""
 )
 
 private data class AbuseIpDbRisk(
@@ -298,13 +307,15 @@ private object SecureApiKeyStore {
     private const val IpApiIsKey = "ipapi_is"
     private const val LegacyIpApiComKey = "ipapi"
     private const val CustomKey = "custom"
+    private const val CustomEndpoint = "custom_endpoint"
 
     fun load(context: Context): ApiKeyConfig {
         val preferences = context.getSharedPreferences(PreferencesName, Context.MODE_PRIVATE)
         return ApiKeyConfig(
             abuseIpDbKey = decrypt(preferences.getString(AbuseKey, null)).orEmpty(),
             ipApiKey = decrypt(preferences.getString(IpApiIsKey, null)).orEmpty(),
-            customKey = decrypt(preferences.getString(CustomKey, null)).orEmpty()
+            customKey = decrypt(preferences.getString(CustomKey, null)).orEmpty(),
+            customEndpoint = decrypt(preferences.getString(CustomEndpoint, null)).orEmpty()
         )
     }
 
@@ -314,6 +325,7 @@ private object SecureApiKeyStore {
             .putString(IpApiIsKey, config.ipApiKey.takeIf { it.isNotBlank() }?.let(::encrypt))
             .remove(LegacyIpApiComKey)
             .putString(CustomKey, config.customKey.takeIf { it.isNotBlank() }?.let(::encrypt))
+            .putString(CustomEndpoint, config.customEndpoint.takeIf { it.isNotBlank() }?.let(::encrypt))
             .apply()
     }
 
@@ -400,6 +412,7 @@ private fun NetScopeApp() {
     var purityLoading by remember { mutableStateOf(false) }
     var purityError by remember { mutableStateOf<String?>(null) }
     var apiKeyConfig by remember { mutableStateOf(runCatching { SecureApiKeyStore.load(context) }.getOrDefault(ApiKeyConfig())) }
+    var showApiKeySettings by remember { mutableStateOf(false) }
 
     fun refreshIpInfo() {
         scope.launch {
@@ -462,9 +475,19 @@ private fun NetScopeApp() {
     }
 
     fun saveApiKeys(config: ApiKeyConfig) {
-        runCatching { SecureApiKeyStore.save(context, config) }
+        val normalized = config.copy(customEndpoint = config.customEndpoint.trim())
+        if (!isHttpsEndpoint(normalized.customEndpoint)) {
+            purityError = "自定义请求地址必须是完整的 HTTPS 地址"
+            return
+        }
+        if (normalized.customKey.isBlank() != normalized.customEndpoint.isBlank()) {
+            purityError = "自定义 API Key 与 HTTPS 请求地址需要同时填写或同时清空"
+            return
+        }
+        runCatching { SecureApiKeyStore.save(context, normalized) }
             .onSuccess {
-                apiKeyConfig = config
+                apiKeyConfig = normalized
+                showApiKeySettings = false
                 runPurityDiagnosis()
             }
             .onFailure { purityError = "无法保存本地 Key：${it.asUserMessage()}" }
@@ -541,15 +564,22 @@ private fun NetScopeApp() {
                     }
                 },
                 navigationIcon = {
-                    Box(
-                        modifier = Modifier
-                            .padding(start = 14.dp)
-                            .size(36.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(SoftBlue),
-                        contentAlignment = Alignment.Center
+                    Row(
+                        modifier = Modifier.padding(start = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Outlined.Public, contentDescription = null, tint = Blue)
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(SoftBlue),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Outlined.Public, contentDescription = null, tint = Blue)
+                        }
+                        IconButton(onClick = { showApiKeySettings = true }) {
+                            Icon(Icons.Outlined.VpnKey, contentDescription = "授权数据源 Key 设置", tint = Blue)
+                        }
                     }
                 },
                 actions = {
@@ -606,20 +636,6 @@ private fun NetScopeApp() {
                     loading = purityLoading,
                     error = purityError,
                     onRetry = { runPurityDiagnosis() }
-                )
-            }
-            item {
-                SectionHeader(
-                    icon = Icons.Outlined.VpnLock,
-                    title = "授权数据源 Key",
-                    subtitle = "AbuseIPDB 与 ipapi.is Key 本地 Keystore 加密保存"
-                )
-            }
-            item {
-                ApiKeySettingsCard(
-                    savedConfig = apiKeyConfig,
-                    onSave = { saveApiKeys(it) },
-                    onClear = { clearApiKeys() }
                 )
             }
             item {
@@ -696,6 +712,15 @@ private fun NetScopeApp() {
                 Footer()
             }
         }
+    }
+
+    if (showApiKeySettings) {
+        ApiKeySettingsDialog(
+            savedConfig = apiKeyConfig,
+            onDismiss = { showApiKeySettings = false },
+            onSave = { saveApiKeys(it) },
+            onClear = { clearApiKeys() }
+        )
     }
 }
 
@@ -840,73 +865,97 @@ private fun Ipv6Card(ipv6: String?, loading: Boolean) {
 }
 
 @Composable
-private fun ApiKeySettingsCard(
+private fun ApiKeySettingsDialog(
     savedConfig: ApiKeyConfig,
+    onDismiss: () -> Unit,
     onSave: (ApiKeyConfig) -> Unit,
     onClear: () -> Unit
 ) {
     var abuseKey by remember(savedConfig) { mutableStateOf(savedConfig.abuseIpDbKey) }
     var ipApiKey by remember(savedConfig) { mutableStateOf(savedConfig.ipApiKey) }
+    var customEndpoint by remember(savedConfig) { mutableStateOf(savedConfig.customEndpoint) }
     var customKey by remember(savedConfig) { mutableStateOf(savedConfig.customKey) }
-    val configuredCount = listOf(abuseKey, ipApiKey, customKey).count { it.isNotBlank() }
+    val endpointIsValid = isHttpsEndpoint(customEndpoint)
+    val customConfigured = customEndpoint.isNotBlank() && customKey.isNotBlank()
+    val customPairIsValid = customEndpoint.isBlank() == customKey.isBlank()
+    val formIsValid = endpointIsValid && customPairIsValid
+    val configuredCount = listOf(abuseKey.isNotBlank(), ipApiKey.isNotBlank(), customConfigured).count { it }
 
-    Card(
-        shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(containerColor = CardSurface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(modifier = Modifier.padding(17.dp)) {
-            Text("可选授权增强", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Ink)
-            Spacer(Modifier.height(5.dp))
-            Text("Key 使用 Android Keystore 加密保存在本机，不上传到本项目服务器、不写入日志。保存后会自动重新执行纯净度诊断。", fontSize = 12.sp, color = MutedInk, lineHeight = 18.sp)
-            Spacer(Modifier.height(13.dp))
-            OutlinedTextField(
-                value = abuseKey,
-                onValueChange = { abuseKey = it.trim() },
-                label = { Text("AbuseIPDB API Key") },
-                supportingText = { Text("用于 abuseConfidenceScore、报告数、Tor 与使用类型提示") },
-                visualTransformation = PasswordVisualTransformation(),
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(Modifier.height(10.dp))
-            OutlinedTextField(
-                value = ipApiKey,
-                onValueChange = { ipApiKey = it.trim() },
-                label = { Text("ipapi.is API Key") },
-                supportingText = { Text("用于 VPN、代理、Tor、托管、滥用与爬虫提示") },
-                visualTransformation = PasswordVisualTransformation(),
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(Modifier.height(10.dp))
-            OutlinedTextField(
-                value = customKey,
-                onValueChange = { customKey = it.trim() },
-                label = { Text("自定义预留 Key（可选）") },
-                supportingText = { Text("仅本地加密保存，当前版本不会发送或参与评分") },
-                visualTransformation = PasswordVisualTransformation(),
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Button(onClick = { onSave(ApiKeyConfig(abuseKey, ipApiKey, customKey)) }) {
-                    Text("加密保存并检测")
-                }
-                if (configuredCount > 0) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = { Icon(Icons.Outlined.VpnKey, contentDescription = null, tint = Blue) },
+        title = { Text("授权数据源 Key", fontWeight = FontWeight.Bold, color = Ink) },
+        text = {
+            Column {
+                Text("Key 与自定义请求地址均使用 Android Keystore 加密保存在本机，不上传到本项目服务器、不写入日志。", fontSize = 12.sp, color = MutedInk, lineHeight = 18.sp)
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = abuseKey,
+                    onValueChange = { abuseKey = it.trim() },
+                    label = { Text("AbuseIPDB API Key") },
+                    supportingText = { Text("用于 abuseConfidenceScore、报告数、Tor 与使用类型提示") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = ipApiKey,
+                    onValueChange = { ipApiKey = it.trim() },
+                    label = { Text("ipapi.is API Key") },
+                    supportingText = { Text("用于 VPN、代理、Tor、托管、滥用与爬虫提示") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = customEndpoint,
+                    onValueChange = { customEndpoint = it.trim() },
+                    label = { Text("自定义请求地址（HTTPS，可选）") },
+                    supportingText = {
+                        Text(
+                            if (!endpointIsValid) "请输入完整 HTTPS 地址，例如：https://api.example.com/v1/check" else if (!customPairIsValid) "自定义地址与 Key 需要同时填写" else "例如：https://api.example.com/v1/check",
+                            color = if (formIsValid) MutedInk else Red
+                        )
+                    },
+                    isError = !endpointIsValid || !customPairIsValid,
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = customKey,
+                    onValueChange = { customKey = it.trim() },
+                    label = { Text("自定义 API Key（可选）") },
+                    supportingText = { Text(if (!customPairIsValid) "请同时填写 HTTPS 请求地址与自定义 Key" else "会与请求地址配套保存；当前版本不会自动请求或参与评分") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    if (configuredCount > 0) "已配置 $configuredCount / 3 个数据源；保存后会重新执行内置纯净度诊断。" else "未配置时，APP 仍只使用不需要 Key 的公开基础诊断。",
+                    fontSize = 11.sp,
+                    color = MutedInk
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onSave(ApiKeyConfig(abuseKey, ipApiKey, customKey, customEndpoint)) },
+                enabled = formIsValid
+            ) { Text("加密保存") }
+        },
+        dismissButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (configuredCount > 0 || customEndpoint.isNotBlank() || customKey.isNotBlank()) {
                     OutlinedButton(onClick = onClear) { Text("清除全部") }
                 }
+                OutlinedButton(onClick = onDismiss) { Text("取消") }
             }
-            Spacer(Modifier.height(9.dp))
-            Text(
-                if (configuredCount > 0) "已配置 $configuredCount / 3 个本地 Key。" else "未配置时，APP 仍只使用不需要 Key 的公开基础诊断。",
-                fontSize = 11.sp,
-                color = MutedInk
-            )
         }
-    }
+    )
 }
 
 @Composable

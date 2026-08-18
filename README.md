@@ -33,7 +33,7 @@ Ping0 的公开说明将 IP 风控、实际使用类型、原生性、共享人�
 
 ### 授权 API Key
 
-如果你有 AbuseIPDB API Key 或 ipapi.is API Key，可在 APP 首页的 **授权数据源 Key** 卡片中配置。三类 Key 均通过 Android Keystore 的 AES-GCM 密钥加密保存在当前设备；系统云备份和设备迁移已禁用。AbuseIPDB 与 ipapi.is 只会在你保存对应 Key 后被调用；ipapi.is 使用官方 JSON POST 认证，避免将 Key 放入 URL。自定义预留 Key 在当前版本仅保存、不联网、不参与评分。详细操作见 [`API-Key-配置指南.md`](API-Key-配置指南.md)。
+如果你有 AbuseIPDB API Key 或 ipapi.is API Key，可点击 APP 顶部地球图标右侧的 **钥匙图标** 进行配置。Key 与自定义 HTTPS 请求地址均通过 Android Keystore 的 AES-GCM 密钥加密保存在当前设备；系统云备份和设备迁移已禁用。AbuseIPDB 与 ipapi.is 只会在你保存对应 Key 后被调用；ipapi.is 使用官方 JSON POST 认证，避免将 Key 放入 URL。自定义 HTTPS 地址与 Key 必须成对填写，当前版本仅本地保存、不联网、不参与评分。详细操作见 [`API-Key-配置指南.md`](API-Key-配置指南.md)。
 
 ## 技术栈
 
@@ -79,7 +79,7 @@ cd android
 
 ## 网络端点与隐私说明
 
-应用使用 `api.ipify.org` 获取公网 IP，并使用 `ipapi.co` 与 `ipwho.is` 查询 IP 地理属性；增强纯净度诊断会按需将当前公网 IP 发送给 `proxycheck.io`，并请求 Tor Project 的当前出口状态。仅在用户自行填入对应 Key 后，模块才会调用 AbuseIPDB APIv2 Check 与 ipapi.is 官方 JSON POST 端点；自定义预留 Key 当前不会发送给任何端点。网络连通性与服务状态模块会对页面中列出的服务发起少量 HTTPS 或 TCP 连接，DNS 解析使用 Android 系统解析器，Whois 查询连接公开注册表。应用不会在本地持久化保存 IP 历史或检测报告，也不读取账号、Cookie、浏览记录或设备指纹；但第三方服务与公开注册表可能按照其自身隐私政策处理请求日志。用户应在正式部署或公开发布前，对接口可用性、服务条款和隐私政策进行复核。
+应用使用 `api.ipify.org` 获取公网 IP，并使用 `ipapi.co` 与 `ipwho.is` 查询 IP 地理属性；增强纯净度诊断会按需将当前公网 IP 发送给 `proxycheck.io`，并请求 Tor Project 的当前出口状态。仅在用户自行填入对应 Key 后，模块才会调用 AbuseIPDB APIv2 Check 与 ipapi.is 官方 JSON POST 端点；自定义 HTTPS 地址与 Key 当前只在本地加密保存，不会发送给任何端点。网络连通性与服务状态模块会对页面中列出的服务发起少量 HTTPS 或 TCP 连接，DNS 解析使用 Android 系统解析器，Whois 查询连接公开注册表。应用不会在本地持久化保存 IP 历史或检测报告，也不读取账号、Cookie、浏览记录或设备指纹；但第三方服务与公开注册表可能按照其自身隐私政策处理请求日志。用户应在正式部署或公开发布前，对接口可用性、服务条款和隐私政策进行复核。
 
 ## 构建验证
 
