@@ -12,9 +12,9 @@ android {
         applicationId = "ing.ipcheck.netscope"
         minSdk = 26
         targetSdk = 35
-        // v1.0.18 adds editable connectivity targets, ASN/MAC lookup and official status summaries.
-        versionCode = providers.gradleProperty("versionCode").orNull?.toIntOrNull() ?: 1018
-        versionName = providers.gradleProperty("versionName").orNull ?: "1.0.18"
+        // v1.0.19 adds advanced DNS records, ASN neighbours, Globalping and OONI diagnostics.
+        versionCode = providers.gradleProperty("versionCode").orNull?.toIntOrNull() ?: 1019
+        versionName = providers.gradleProperty("versionName").orNull ?: "1.0.19"
     }
 
     val releaseStorePath = providers.gradleProperty("signingStoreFile").orNull

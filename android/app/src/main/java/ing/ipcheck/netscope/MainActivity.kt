@@ -221,6 +221,7 @@ private data class DnsResolverResult(
 
 private data class DnsLookupResult(
     val host: String,
+    val recordType: String = "A",
     val addresses: List<String>,
     val resolverResults: List<DnsResolverResult> = emptyList(),
     val error: String? = null
@@ -233,6 +234,12 @@ private data class WhoisLookupResult(
     val error: String? = null
 )
 
+private data class AsnNeighbour(
+    val asn: String,
+    val position: String,
+    val pathCount: Int?
+)
+
 private data class AsnLookupResult(
     val asn: String,
     val name: String,
@@ -240,6 +247,7 @@ private data class AsnLookupResult(
     val countryCode: String,
     val website: String,
     val allocatedAt: String,
+    val neighbours: List<AsnNeighbour> = emptyList(),
     val error: String? = null
 )
 
@@ -247,6 +255,41 @@ private data class MacLookupResult(
     val mac: String,
     val vendor: String,
     val isLocallyAdministered: Boolean,
+    val error: String? = null
+)
+
+private data class GlobalPingProbeResult(
+    val location: String,
+    val network: String,
+    val averageMs: Double?,
+    val packetLoss: Double?,
+    val status: String
+)
+
+private data class GlobalPingResult(
+    val target: String,
+    val measurementId: String,
+    val probes: List<GlobalPingProbeResult>,
+    val status: String,
+    val error: String? = null
+)
+
+private data class OoniMeasurementResult(
+    val input: String,
+    val country: String,
+    val asn: String,
+    val measuredAt: String,
+    val anomaly: Boolean,
+    val confirmed: Boolean,
+    val failure: Boolean,
+    val verification: String
+)
+
+private data class OoniQueryResult(
+    val domain: String,
+    val country: String,
+    val count: Int,
+    val measurements: List<OoniMeasurementResult>,
     val error: String? = null
 )
 
@@ -623,6 +666,7 @@ private fun NetScopeApp() {
     var speedResult by remember { mutableStateOf<NetworkSpeedResult?>(null) }
     var speedTesting by remember { mutableStateOf(false) }
     var dnsHost by remember { mutableStateOf("example.com") }
+    var dnsRecordType by remember { mutableStateOf("A") }
     var dnsResult by remember { mutableStateOf<DnsLookupResult?>(null) }
     var dnsLoading by remember { mutableStateOf(false) }
     var whoisQuery by remember { mutableStateOf("") }
@@ -634,6 +678,13 @@ private fun NetScopeApp() {
     var macQuery by remember { mutableStateOf("") }
     var macResult by remember { mutableStateOf<MacLookupResult?>(null) }
     var macLoading by remember { mutableStateOf(false) }
+    var globalPingTarget by remember { mutableStateOf("example.com") }
+    var globalPingResult by remember { mutableStateOf<GlobalPingResult?>(null) }
+    var globalPingLoading by remember { mutableStateOf(false) }
+    var ooniDomain by remember { mutableStateOf("example.com") }
+    var ooniCountry by remember { mutableStateOf("US") }
+    var ooniResult by remember { mutableStateOf<OoniQueryResult?>(null) }
+    var ooniLoading by remember { mutableStateOf(false) }
     var portProbes by remember { mutableStateOf(DefaultPortProbes) }
     var portsLoading by remember { mutableStateOf(false) }
     var officialStatuses by remember { mutableStateOf(DefaultOfficialStatuses) }
@@ -799,15 +850,20 @@ private fun NetScopeApp() {
 
     fun resolveDns() {
         val target = dnsHost.trim().removePrefix("https://").removePrefix("http://").substringBefore('/').trim()
+        val recordType = dnsRecordType.trim().uppercase()
         if (target.isBlank()) {
             dnsResult = DnsLookupResult(host = "", addresses = emptyList(), error = "请输入域名或主机名")
+            return
+        }
+        if (recordType !in setOf("A", "AAAA", "TXT", "MX", "NS", "CNAME")) {
+            dnsResult = DnsLookupResult(host = target, recordType = recordType, addresses = emptyList(), error = "仅支持 A、AAAA、TXT、MX、NS、CNAME")
             return
         }
         scope.launch {
             dnsLoading = true
             dnsResult = withContext(Dispatchers.IO) {
-                runCatching { NetworkRepository.resolveDns(target) }
-                    .getOrElse { DnsLookupResult(host = target, addresses = emptyList(), error = it.asUserMessage()) }
+                runCatching { NetworkRepository.resolveDns(target, recordType) }
+                    .getOrElse { DnsLookupResult(host = target, recordType = recordType, addresses = emptyList(), error = it.asUserMessage()) }
             }
             dnsLoading = false
         }
@@ -832,14 +888,14 @@ private fun NetScopeApp() {
     fun lookupAsn() {
         val normalized = asnQuery.trim().removePrefix("AS").removePrefix("as")
         if (normalized.toLongOrNull()?.takeIf { it > 0 } == null) {
-            asnResult = AsnLookupResult("", "", "", "", "", "", "请输入有效 ASN，例如 AS13335")
+            asnResult = AsnLookupResult(asn = "", name = "", description = "", countryCode = "", website = "", allocatedAt = "", error = "请输入有效 ASN，例如 AS13335")
             return
         }
         scope.launch {
             asnLoading = true
             asnResult = withContext(Dispatchers.IO) {
                 runCatching { NetworkRepository.lookupAsn(normalized) }
-                    .getOrElse { AsnLookupResult("AS$normalized", "", "", "", "", "", it.asUserMessage()) }
+                    .getOrElse { AsnLookupResult(asn = "AS$normalized", name = "", description = "", countryCode = "", website = "", allocatedAt = "", error = it.asUserMessage()) }
             }
             asnLoading = false
         }
@@ -858,6 +914,39 @@ private fun NetScopeApp() {
                     .getOrElse { MacLookupResult(normalized, "", false, it.asUserMessage()) }
             }
             macLoading = false
+        }
+    }
+
+    fun runGlobalPing() {
+        val target = globalPingTarget.trim().removePrefix("https://").removePrefix("http://").substringBefore('/').trim()
+        if (target.isBlank() || target.any { it.isWhitespace() }) {
+            globalPingResult = GlobalPingResult("", "", emptyList(), "错误", "请输入域名或 IP 地址")
+            return
+        }
+        scope.launch {
+            globalPingLoading = true
+            globalPingResult = withContext(Dispatchers.IO) {
+                runCatching { NetworkRepository.runGlobalPing(target) }
+                    .getOrElse { GlobalPingResult(target, "", emptyList(), "错误", it.asUserMessage()) }
+            }
+            globalPingLoading = false
+        }
+    }
+
+    fun queryOoni() {
+        val domain = ooniDomain.trim().removePrefix("https://").removePrefix("http://").substringBefore('/').trim()
+        val country = ooniCountry.trim().uppercase()
+        if (domain.isBlank() || country.length != 2 || country.any { !it.isLetter() }) {
+            ooniResult = OoniQueryResult(domain, country, 0, emptyList(), "请输入域名和两位国家代码，例如 US")
+            return
+        }
+        scope.launch {
+            ooniLoading = true
+            ooniResult = withContext(Dispatchers.IO) {
+                runCatching { NetworkRepository.queryOoni(domain, country) }
+                    .getOrElse { OoniQueryResult(domain, country, 0, emptyList(), it.asUserMessage()) }
+            }
+            ooniLoading = false
         }
     }
 
@@ -1055,10 +1144,12 @@ private fun NetScopeApp() {
             item {
                 DnsLookupCard(
                     host = dnsHost,
-                    result = dnsResult,
-                    loading = dnsLoading,
-                    onHostChange = { dnsHost = it },
-                    onLookup = { resolveDns() }
+                result = dnsResult,
+                loading = dnsLoading,
+                recordType = dnsRecordType,
+                onHostChange = { dnsHost = it },
+                onRecordTypeChange = { dnsRecordType = it },
+                onLookup = { resolveDns() }
                 )
             }
             item {
@@ -1086,6 +1177,33 @@ private fun NetScopeApp() {
                     loading = macLoading,
                     onQueryChange = { macQuery = it },
                     onLookup = { lookupMac() }
+                )
+            }
+            item {
+                SectionHeader(
+                    icon = Icons.Outlined.Language,
+                    title = "全球与审查数据",
+                    subtitle = "仅在手动执行时调用公共远端探针或历史测量 API"
+                )
+            }
+            item {
+                GlobalPingCard(
+                    target = globalPingTarget,
+                    result = globalPingResult,
+                    loading = globalPingLoading,
+                    onTargetChange = { globalPingTarget = it },
+                    onRun = { runGlobalPing() }
+                )
+            }
+            item {
+                OoniCard(
+                    domain = ooniDomain,
+                    country = ooniCountry,
+                    result = ooniResult,
+                    loading = ooniLoading,
+                    onDomainChange = { ooniDomain = it },
+                    onCountryChange = { ooniCountry = it },
+                    onRun = { queryOoni() }
                 )
             }
             item {
@@ -1962,7 +2080,9 @@ private fun DnsLookupCard(
     host: String,
     result: DnsLookupResult?,
     loading: Boolean,
+    recordType: String,
     onHostChange: (String) -> Unit,
+    onRecordTypeChange: (String) -> Unit,
     onLookup: () -> Unit
 ) {
     Card(
@@ -1972,12 +2092,20 @@ private fun DnsLookupCard(
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(17.dp)) {
-            NativeToolHeader(Icons.Outlined.Dns, "DNS 解析", "使用 Android 系统解析器查询 A / AAAA 地址")
+            NativeToolHeader(Icons.Outlined.Dns, "DNS 解析", "系统解析 + Cloudflare、Google、Quad9 的 DoH 交叉查询")
             Spacer(Modifier.height(12.dp))
             OutlinedTextField(
                 value = host,
                 onValueChange = onHostChange,
                 label = { Text("域名或主机名") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                value = recordType,
+                onValueChange = onRecordTypeChange,
+                label = { Text("记录类型：A、AAAA、TXT、MX、NS、CNAME") },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
             )
@@ -2000,9 +2128,9 @@ private fun DnsLookupCard(
                 if (it.error != null) {
                     ResultMessage(it.error, Red)
                 } else {
-                    Text("${it.host} 的系统解析", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = Ink)
+                    Text("${it.host} 的 ${it.recordType} 系统解析", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = Ink)
                     Spacer(Modifier.height(5.dp))
-                    Text(it.addresses.joinToString("\n").ifBlank { "系统未返回 A / AAAA 地址" }, fontSize = 12.sp, color = MutedInk, lineHeight = 18.sp)
+                    Text(it.addresses.joinToString("\n").ifBlank { if (it.recordType in setOf("A", "AAAA")) "系统未返回 ${it.recordType} 地址" else "该记录类型由公共 DoH 解析器提供交叉结果" }, fontSize = 12.sp, color = MutedInk, lineHeight = 18.sp)
                     if (it.resolverResults.isNotEmpty()) {
                         Spacer(Modifier.height(12.dp))
                         Text("公共 DNS 交叉核验", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = Ink)
@@ -2104,6 +2232,14 @@ private fun AsnLookupCard(
                     InfoLine(Icons.Outlined.LocationOn, "国家/地区", item.countryCode.ifBlank { "—" })
                     InfoLine(Icons.Outlined.Schedule, "分配日期", item.allocatedAt.ifBlank { "—" })
                     if (item.description.isNotBlank()) Text(item.description, fontSize = 11.sp, color = MutedInk, lineHeight = 16.sp, modifier = Modifier.padding(top = 5.dp))
+                    if (item.neighbours.isNotEmpty()) {
+                        Spacer(Modifier.height(9.dp))
+                        Text("观测到的 ASN 邻居（最多显示 12 个）", fontSize = 12.sp, color = Ink, fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.height(4.dp))
+                        item.neighbours.forEach { neighbour ->
+                            Text("${neighbour.asn} · ${neighbour.position}${neighbour.pathCount?.let { " · 路径 $it" }.orEmpty()}", fontSize = 11.sp, color = MutedInk, lineHeight = 16.sp)
+                        }
+                    }
                     if (item.website.isNotBlank()) Text(item.website, fontSize = 11.sp, color = Blue, modifier = Modifier.padding(top = 5.dp))
                 }
             }
@@ -2135,6 +2271,81 @@ private fun MacLookupCard(
                     Text(item.mac.chunked(2).joinToString(":"), fontWeight = FontWeight.Bold, fontSize = 17.sp, color = Ink)
                     InfoLine(Icons.Outlined.Business, "厂商", item.vendor)
                     if (item.isLocallyAdministered) Text("此地址设置了本地管理位，常见于随机化/虚拟 MAC；公开 OUI 厂商仅供参考。", color = Amber, fontSize = 11.sp, lineHeight = 16.sp, modifier = Modifier.padding(top = 5.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GlobalPingCard(
+    target: String,
+    result: GlobalPingResult?,
+    loading: Boolean,
+    onTargetChange: (String) -> Unit,
+    onRun: () -> Unit
+) {
+    Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = CardSurface), elevation = CardDefaults.cardElevation(defaultElevation = 1.dp), modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(17.dp)) {
+            NativeToolHeader(Icons.Outlined.Language, "Globalping 全球延迟", "从美国、德国和新加坡各选 1 个远端探针执行 ping")
+            Spacer(Modifier.height(8.dp))
+            Text("仅在点击后发起。单次消耗最多 3 个 Globalping 测试额度；结果是远端探针到目标的测量，不是本机网络延迟。", fontSize = 11.sp, color = MutedInk, lineHeight = 16.sp)
+            Spacer(Modifier.height(10.dp))
+            OutlinedTextField(value = target, onValueChange = onTargetChange, label = { Text("域名或 IP 地址") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(10.dp))
+            Button(onClick = onRun, enabled = !loading, colors = ButtonDefaults.buttonColors(containerColor = Blue)) {
+                if (loading) CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.White) else Icon(Icons.Outlined.Language, contentDescription = null, modifier = Modifier.size(17.dp))
+                Spacer(Modifier.width(7.dp)); Text(if (loading) "全球探测中" else "运行全球 Ping")
+            }
+            result?.let { item ->
+                Spacer(Modifier.height(12.dp)); HorizontalDivider(color = Border); Spacer(Modifier.height(10.dp))
+                if (item.error != null) ResultMessage(item.error, Red) else {
+                    Text("${item.target} · ${item.status}", fontWeight = FontWeight.SemiBold, color = Ink, fontSize = 13.sp)
+                    item.probes.forEach { probe ->
+                        Spacer(Modifier.height(6.dp))
+                        Text("${probe.location} · ${probe.network.ifBlank { "网络未知" } }", color = Ink, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                        Text("${probe.status}${probe.averageMs?.let { " · 平均 ${formatRisk(it)}ms" }.orEmpty()}${probe.packetLoss?.let { " · 丢包 ${formatRisk(it)}%" }.orEmpty()}", color = MutedInk, fontSize = 11.sp)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun OoniCard(
+    domain: String,
+    country: String,
+    result: OoniQueryResult?,
+    loading: Boolean,
+    onDomainChange: (String) -> Unit,
+    onCountryChange: (String) -> Unit,
+    onRun: () -> Unit
+) {
+    Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = CardSurface), elevation = CardDefaults.cardElevation(defaultElevation = 1.dp), modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(17.dp)) {
+            NativeToolHeader(Icons.Outlined.Security, "OONI 历史测量", "查询指定国家中公开的 Web Connectivity 历史观测，不执行本机审查测试")
+            Spacer(Modifier.height(8.dp))
+            Text("每次最多取回 5 条元数据。异常或已确认状态反映历史志愿者测量，不能直接证明你此刻的网络被封锁。", fontSize = 11.sp, color = MutedInk, lineHeight = 16.sp)
+            Spacer(Modifier.height(10.dp))
+            OutlinedTextField(value = domain, onValueChange = onDomainChange, label = { Text("域名") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(value = country, onValueChange = onCountryChange, label = { Text("国家代码，例如 US") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(10.dp))
+            Button(onClick = onRun, enabled = !loading, colors = ButtonDefaults.buttonColors(containerColor = Blue)) {
+                if (loading) CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.White) else Icon(Icons.Outlined.Search, contentDescription = null, modifier = Modifier.size(17.dp))
+                Spacer(Modifier.width(7.dp)); Text(if (loading) "查询中" else "查询公开历史")
+            }
+            result?.let { item ->
+                Spacer(Modifier.height(12.dp)); HorizontalDivider(color = Border); Spacer(Modifier.height(10.dp))
+                if (item.error != null) ResultMessage(item.error, Red) else {
+                    Text("${item.country} · ${item.count} 条近期公开测量", fontWeight = FontWeight.SemiBold, color = Ink, fontSize = 13.sp)
+                    item.measurements.forEach { measurement ->
+                        Spacer(Modifier.height(7.dp))
+                        val label = when { measurement.confirmed -> "已确认异常"; measurement.anomaly -> "异常"; measurement.failure -> "测量失败"; else -> "未见异常" }
+                        Text("$label · ${measurement.country} · ${measurement.asn}", color = if (measurement.confirmed || measurement.anomaly) Amber else Green, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                        Text("${measurement.measuredAt.take(19).replace("T", " ")} · ${measurement.verification.ifBlank { "验证状态未知" }}", color = MutedInk, fontSize = 10.sp)
+                    }
                 }
             }
         }
@@ -2438,35 +2649,38 @@ private object NetworkRepository {
         return NetworkSpeedResult(latency, jitter, (bytes * 8.0 / 1_000_000.0) / elapsedSeconds, bytes)
     }
 
-    fun resolveDns(host: String): DnsLookupResult {
-        val addresses = InetAddress.getAllByName(host)
-            .mapNotNull { it.hostAddress }
-            .distinct()
-            .sortedWith(compareBy<String> { if (it.contains(":")) 1 else 0 }.thenBy { it })
+    fun resolveDns(host: String, recordType: String = "A"): DnsLookupResult {
+        val type = recordType.uppercase()
+        val addresses = if (type in setOf("A", "AAAA")) {
+            InetAddress.getAllByName(host)
+                .mapNotNull { it.hostAddress }
+                .filter { if (type == "A") !it.contains(":") else it.contains(":") }
+                .distinct()
+                .sorted()
+        } else emptyList()
         val resolvers = listOf(
             "Cloudflare" to "https://cloudflare-dns.com/dns-query",
             "Google Public DNS" to "https://dns.google/resolve",
             "Quad9" to "https://dns.quad9.net/dns-query"
         )
         val remoteResults = resolvers.map { (name, endpoint) ->
-            runCatching { resolveDnsOverHttps(name, endpoint, host) }
+            runCatching { resolveDnsOverHttps(name, endpoint, host, type) }
                 .getOrElse { error -> DnsResolverResult(name, emptyList(), "错误", error.asUserMessage()) }
         }
-        if (addresses.isEmpty() && remoteResults.all { it.addresses.isEmpty() }) throw IllegalStateException("未获得可用 DNS 地址")
-        return DnsLookupResult(host = host, addresses = addresses, resolverResults = remoteResults)
+        if (addresses.isEmpty() && remoteResults.all { it.addresses.isEmpty() }) throw IllegalStateException("未获得可用 $type 记录")
+        return DnsLookupResult(host = host, recordType = type, addresses = addresses, resolverResults = remoteResults)
     }
 
-    private fun resolveDnsOverHttps(name: String, endpoint: String, host: String): DnsResolverResult {
+    private fun resolveDnsOverHttps(name: String, endpoint: String, host: String, recordType: String): DnsResolverResult {
         val encodedHost = URLEncoder.encode(host, Charsets.UTF_8.name()).replace("+", "%20")
         val separator = if (endpoint.contains("?")) "&" else "?"
-        val json = JSONObject(getText("$endpoint${separator}name=$encodedHost&type=A", mapOf("Accept" to "application/dns-json")))
+        val json = JSONObject(getText("$endpoint${separator}name=$encodedHost&type=$recordType", mapOf("Accept" to "application/dns-json")))
         val statusCode = json.intOrNull("Status")
         val answers = json.optJSONArray("Answer")
         val addresses = buildList {
             if (answers != null) {
                 for (index in 0 until answers.length()) {
                     val answer = answers.optJSONObject(index) ?: continue
-                    if (answer.intOrNull("type") !in setOf(1, 28)) continue
                     answer.stringOrBlank("data").trimEnd('.').takeIf { it.isNotBlank() }?.let(::add)
                 }
             }
@@ -2477,6 +2691,70 @@ private object NetworkRepository {
             status = if (statusCode == 0) "正常" else "DNS $statusCode",
             error = if (statusCode == null) "未返回 DNS 状态" else null
         )
+    }
+
+    fun runGlobalPing(target: String): GlobalPingResult {
+        val locations = JSONArray().apply {
+            put(JSONObject().put("country", "US").put("limit", 1))
+            put(JSONObject().put("country", "DE").put("limit", 1))
+            put(JSONObject().put("country", "SG").put("limit", 1))
+        }
+        val request = JSONObject()
+            .put("target", target)
+            .put("type", "ping")
+            .put("locations", locations)
+            .put("measurementOptions", JSONObject().put("packets", 3))
+        var response = JSONObject(postJson("https://api.globalping.io/v1/measurements", request.toString()))
+        val measurementId = response.stringOrBlank("id").ifBlank { throw IllegalStateException("Globalping 未返回测量编号") }
+        for (attempt in 0 until 4) {
+            val state = response.stringOrBlank("status")
+            if (state.isNotBlank() && !state.equals("in-progress", ignoreCase = true)) break
+            Thread.sleep(1_200)
+            response = JSONObject(getText("https://api.globalping.io/v1/measurements/${URLEncoder.encode(measurementId, Charsets.UTF_8.name())}"))
+        }
+        val results = response.optJSONArray("results")
+        val probes = buildList {
+            if (results != null) {
+                for (index in 0 until results.length()) {
+                    val item = results.optJSONObject(index) ?: continue
+                    val probe = item.optJSONObject("probe")
+                    val result = item.optJSONObject("result")
+                    val stats = result?.optJSONObject("stats")
+                    val location = listOf(probe?.stringOrBlank("city"), probe?.stringOrBlank("country")).filter { !it.isNullOrBlank() }.joinToString(", ").ifBlank { "位置未知" }
+                    val network = probe?.stringOrBlank("network").orEmpty()
+                    val average = stats?.opt("avg")?.toString()?.toDoubleOrNull()
+                    val loss = stats?.opt("loss")?.toString()?.toDoubleOrNull()
+                    add(GlobalPingProbeResult(location, network, average, loss, result?.stringOrBlank("status").orEmpty().ifBlank { "结果未知" }))
+                }
+            }
+        }
+        return GlobalPingResult(target, measurementId, probes, response.stringOrBlank("status").ifBlank { "已创建" })
+    }
+
+    fun queryOoni(domain: String, country: String): OoniQueryResult {
+        val encodedDomain = URLEncoder.encode(domain, Charsets.UTF_8.name()).replace("+", "%20")
+        val query = "https://api.ooni.io/api/v1/measurements?probe_cc=${URLEncoder.encode(country, Charsets.UTF_8.name())}&test_name=web_connectivity&domain=$encodedDomain&limit=5"
+        val json = JSONObject(getText(query))
+        val metadata = json.optJSONObject("metadata")
+        val array = json.optJSONArray("results")
+        val measurements = buildList {
+            if (array != null) {
+                for (index in 0 until array.length()) {
+                    val item = array.optJSONObject(index) ?: continue
+                    add(OoniMeasurementResult(
+                        input = item.stringOrBlank("input"),
+                        country = item.stringOrBlank("probe_cc"),
+                        asn = item.stringOrBlank("probe_asn"),
+                        measuredAt = item.stringOrBlank("measurement_start_time"),
+                        anomaly = item.booleanOrNull("anomaly") == true,
+                        confirmed = item.booleanOrNull("confirmed") == true,
+                        failure = item.booleanOrNull("failure") == true,
+                        verification = item.stringOrBlank("verification_status")
+                    ))
+                }
+            }
+        }
+        return OoniQueryResult(domain, country, metadata?.intOrNull("count") ?: measurements.size, measurements)
     }
 
     fun fetchOfficialStatus(source: OfficialStatusResult): OfficialStatusResult {
@@ -2510,13 +2788,29 @@ private object NetworkRepository {
             block?.stringOrBlank("name")?.takeIf { it.isNotBlank() },
             block?.stringOrBlank("desc")?.takeIf { it.isNotBlank() }
         ).joinToString(" · ")
+        val neighbourData = runCatching {
+            JSONObject(getText("https://stat.ripe.net/data/asn-neighbours/data.json?resource=$encoded&lod=0"))
+                .optJSONObject("data")
+        }.getOrNull()
+        val neighbourCounts = neighbourData?.optJSONObject("neighbour_counts")
+        val neighbours = neighbourData?.optJSONArray("neighbours")?.let { array ->
+            buildList {
+                for (index in 0 until array.length()) {
+                    val item = array.optJSONObject(index) ?: continue
+                    val neighbourAsn = item.opt("asn")?.toString().orEmpty().takeIf { it.isNotBlank() } ?: continue
+                    add(AsnNeighbour("AS$neighbourAsn", item.stringOrBlank("type").ifBlank { "未知位置" }, item.intOrNull("power") ?: item.intOrNull("path_count")))
+                }
+            }.sortedByDescending { it.pathCount ?: 0 }.take(12)
+        }.orEmpty()
+        val neighbourSummary = neighbourCounts?.intOrNull("unique")?.let { "观测到的独立邻居：$it（展示前 12 个）" }.orEmpty()
         return AsnLookupResult(
             asn = "AS${data.stringOrBlank("resource").ifBlank { value }}",
             name = holder.ifBlank { allocation.ifBlank { "未提供登记持有人" } },
-            description = listOf(routeState, allocation).filter { it.isNotBlank() }.joinToString("\n"),
+            description = listOf(routeState, allocation, neighbourSummary).filter { it.isNotBlank() }.joinToString("\n"),
             countryCode = "",
-            website = "来源：RIPEstat ASN Overview",
-            allocatedAt = ""
+            website = "来源：RIPEstat ASN Overview / ASN Neighbours",
+            allocatedAt = "",
+            neighbours = neighbours
         )
     }
 

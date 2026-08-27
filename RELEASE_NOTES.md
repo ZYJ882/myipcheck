@@ -1,3 +1,17 @@
+## v1.0.19：高级 DNS、ASN 拓扑与按需远端测量
+
+本版本继续复刻 MyIP / IPCheck.ing 的高级诊断方向，并把公开远端 API 的使用限制直接写入界面，避免把远端或历史结果误说成本机即时检测。
+
+| 新增或升级 | 实现范围与边界 |
+|---|---|
+| DNS 记录类型 | DNS 工具新增 A、AAAA、TXT、MX、NS、CNAME 输入；系统解析仅对 A/AAAA 可用，其余类型由 Cloudflare、Google Public DNS、Quad9 的 DoH 交叉返回。 |
+| ASN 邻居 | ASN 查询同时读取 RIPEstat ASN Neighbours，显示 RIS 可见的独立邻居数和最多 12 条邻居/路径位置。`left`/`right` 是 AS 路径位置，不等于商业上游、下游或客户关系。 |
+| Globalping | 用户手动点击后，从美国、德国、新加坡各选择 1 个探针 ping 目标；单次最多消耗 3 个免费测试，不自动运行。结果表示探针到目标的远端测量。 |
+| OONI 历史 | 用户可输入域名与国家代码，读取最多 5 条 Web Connectivity 历史测量元数据，并显示 anomaly、confirmed、failure 与 verification 状态。它不是本机实时封锁检测。 |
+| 高级 API 文档 | 新增 `docs_advanced_public_api_boundaries.md`，记录端点、受控请求规模、公共额度与解释约束。 |
+
+> Globalping 的免费额度按探针测试计，并可能变化；OONI API 具有速率限制且不适合批量抓取。应用不轮询后台任务、不自动提交测量，仅在用户主动操作时发起受限请求。
+
 ## v1.0.18：连通性管理、ASN / MAC 与官方状态摘要
 
 本版本继续复刻 MyIP / IPCheck.ing 中能在 Android 原生端可靠实现的工具，并严格区分本机探测、公开登记数据与厂商的官方全球服务状态。

@@ -24,10 +24,11 @@
 | 网络连通性 | 检测 HTTPS 目标的可达性和延迟；可添加、删除或恢复最多 12 个 HTTPS 目标，清单加密保存在本机。 |
 | 增强纯净度诊断 | 以公开滥用行为证据生成连续主分，并把 Proxy / VPN / Tor / 中继、托管 / IDC / ASN 和证据覆盖度独立展示；每一分均可回放来源、字段与时效。 |
 | Android 网络隐私 | 展示 Android VPN 状态、Private DNS 模式与系统 DNS 服务器。 |
-| 原生 DNS 与 Whois | 使用 Android 系统解析器及 Cloudflare、Google Public DNS、Quad9 的 DoH 交叉查询；通过公开注册表查询域名或 IP 的 Whois 信息。 |
-| 独立 ASN 与 MAC 查询 | 通过 RIPE NCC RIPEstat 查询 ASN 概览；通过 MACVendors 查询 MAC/OUI 厂商登记，不读取设备 MAC。 |
+| 原生 DNS 与 Whois | 支持 A、AAAA、TXT、MX、NS、CNAME；使用 Android 系统解析器（A/AAAA）及 Cloudflare、Google Public DNS、Quad9 的 DoH 交叉查询；通过公开注册表查询域名或 IP 的 Whois 信息。 |
+| 独立 ASN 与 MAC 查询 | 通过 RIPE NCC RIPEstat 查询 ASN 概览和 RIS 观测邻居；通过 MACVendors 查询 MAC/OUI 厂商登记，不读取设备 MAC。 |
 | 服务状态 | 同时显示当前网络的 HTTPS 443 端口连通性，以及 GitHub、Cloudflare、OpenAI 官方状态页公开摘要。 |
 | 快速网络测量 | 用户主动测量 Cloudflare 的中位延迟、抖动和最多 1 MB 下载吞吐；不上传、不自动运行。 |
+| 全球与审查数据 | 用户可按需调用 Globalping，从美国、德国、新加坡各 1 个探针执行 ping；可查询 OONI 最多 5 条公开 Web Connectivity 历史元数据。两者均不代表本机实时结果。 |
 | 加密 IP 历史与摘要分享 | 查询结果最多保留 30 条加密本地历史，支持清除；可调用 Android 系统分享面板导出本地文本摘要。 |
 | 设备环境 | 展示 Android 版本、语言、应用标识等本机环境信息。 |
 | 浏览器备用入口 | 仅在 WebRTC、JavaScript 指纹或真实多地区探针等依赖浏览器环境时，才打开 IPCheck.ing。 |
@@ -98,7 +99,7 @@ cd android
 
 ## 网络与隐私
 
-应用使用 `api.ipify.org` 获取公网 IP，并使用 `ipapi.co` 与 `ipwho.is` 查询 IP 地理属性；增强诊断按需访问 `proxycheck.io` 与 Tor Project。只有用户自行配置对应 Key 后，才会调用 AbuseIPDB APIv2 Check、ipapi.is 官方 JSON POST、MaxMind GeoIP Insights 与 IPHub v2.2。`myip.edgeone.ai` 在本次核验中无法解析，NSTool 未公开可审计 IP API，二者均不会被自动请求。BrowserLeaks 仅作为浏览器专属的外部自检入口。自定义 HTTPS 地址与 Key 当前不会被发送给任何端点。
+应用使用 `api.ipify.org` 获取公网 IP，并使用 `ipapi.co` 与 `ipwho.is` 查询 IP 地理属性；增强诊断按需访问 `proxycheck.io` 与 Tor Project。只有用户自行配置对应 Key 后，才会调用 AbuseIPDB APIv2 Check、ipapi.is 官方 JSON POST、MaxMind GeoIP Insights 与 IPHub v2.2。DNS 交叉查询仅在用户执行时访问 Cloudflare、Google Public DNS、Quad9；ASN 仅在用户查询时访问 RIPEstat；Globalping 和 OONI 也仅在用户主动操作时按受限规模请求。`myip.edgeone.ai` 在本次核验中无法解析，NSTool 未公开可审计 IP API，二者均不会被自动请求。BrowserLeaks 仅作为浏览器专属的外部自检入口。自定义 HTTPS 地址与 Key 当前不会被发送给任何端点。
 
 应用不会读取账号、Cookie、浏览记录、设备指纹、通讯录或位置权限。IP 查询历史（最多 30 条）、授权凭据和连通性目标清单均以 Android Keystore AES-GCM 加密后仅保存在本机；检测报告不会上传或创建公开链接。网络服务与公开注册表仍可能按照各自隐私政策处理请求日志，使用前请自行确认服务条款、账户配额与隐私政策。
 
