@@ -1,81 +1,76 @@
 # MyIPCheck 对照 MyIP / ipcheck.ing 复刻差异审计
 
-**审计对象**：`ZYJ882/myipcheck` Android 原生应用
+**审计对象**：`ZYJ882/myipcheck` Android 原生应用，源码基线为 `e145ad2`，对应 Release **v1.0.20**。
 
-**对照对象**：[jason5ng32/MyIP](https://github.com/jason5ng32/MyIP) 与 [ipcheck.ing](https://ipcheck.ing/)
+**对照对象**：[jason5ng32/MyIP][1] 与 [ipcheck.ing][2] 的公开功能入口。
 
-**审计性质**：基于目标项目公开 README、仓库目录/API 文件名、ipcheck.ing 首页公开入口，以及 MyIPCheck 当前 Android 源码与 README 的静态对照。结论区分“已实现”“部分实现”“尚未实现”和“架构上不等价”，不把 Android 外部网页入口误判成原生复刻。
+**审计性质**：本文按公开项目资料、公开接口文档及 MyIPCheck 当前源码进行能力对照。状态仅表示 Android 端的实际实现范围：**已实现**、**部分实现**、**未实现**或**架构不等价**。它不把外部网页入口、远端历史数据或第三方状态 API 误称为本机原生检测，也不将功能项数量视为代码覆盖率。
 
 ## 总结结论
 
-MyIPCheck 已经复刻了一个**移动端核心子集**：当前 IP 与 IPv6、基础地理和 ASN 展示、连通性、DNS/Whois、端口状态、Android VPN/Private DNS、Cloudflare 轻量延迟、公开风险信号诊断，以及部分浏览器外部入口。它目前还不是 MyIP/ipcheck.ing 的完整功能复刻。
+MyIPCheck 现已覆盖一个更完整的**移动端网络诊断子集**：任意 IP 查询与加密历史、可编辑 HTTPS 连通性、受限的单主机单端口探测、A/AAAA/TXT/MX/NS/CNAME DNS 解析与多解析器差异摘要、Whois、ASN 概览与 RIS 邻居、MAC/OUI 查询、轻量 Cloudflare 测速、按需 Globalping 与 OONI 历史元数据，以及 GitHub、Cloudflare、OpenAI、Discord 的官方状态摘要。
 
-按功能项粗略统计，当前状态约为：核心信息与基础网络能力 **6 项已实现或接近实现**，**9 项部分实现**，**14 项缺失或仅有外部入口**。此统计按能力模块而非页面数量计算，不能当作代码覆盖率。
+它仍不是 MyIP 或 ipcheck.ing 的完整客户端。最重要的缺口是浏览器专属能力、全球后端服务和大型内容系统：**WebRTC/SDP 泄漏、Canvas/WebGL/浏览器指纹、真正递归 DNS Leak 实验、Globalping MTR、代理规则测试、完整审查测量、可过期在线报告、Curl API、Earth Online、Persona/Invisibility 深度页面与完整安全清单**。
 
-最明显的缺口不是 MaxMind/IPHub，而是目标项目的工具箱宽度：**任意 IP 查询、IP 历史、真正的 WebRTC/DNS Leak、完整测速、Globalping 全球探针、MTR、代理规则、审查检查、MAC、ASN 历史/上游拓扑、服务官方状态、报告分享、Curl API、Earth Online、安全清单、指纹/Persona/Invisibility 等**。
+> Android 展示的 VPN、Private DNS、网络传输、系统 DNS、网络验证、接口和系统带宽估算仅描述 Android 当前网络能力；它们不是 WebRTC、JavaScript 指纹或浏览器 DNS 泄漏结论。DNS 解析器结果不同也可能源于 CDN、地域、缓存或策略，**不构成 DNS 泄漏证据**。
 
 ## 逐项差异矩阵
 
-| 目标能力 | MyIP / ipcheck.ing 公开行为 | MyIPCheck 当前状态 | 差异与判断 | 优先级 |
+| 目标能力 | MyIP / ipcheck.ing 公开行为 | MyIPCheck v1.0.20 状态 | 差异与判断 | 优先级 |
 |---|---|---|---|---:|
-| 当前 IP 信息 | 多探针 IPv4/IPv6；国家、地区、城市、ASN、组织、时区；可查询任意 IP | 已实现当前 IPv4、可用 IPv6、地理、ISP、ASN | 当前出口基本实现；**任意 IP 查询缺失**，数据源选择器也未实现 | P0 |
-| IP 历史 | 浏览器本地记录 IP，可按类型和国家过滤 | 未实现 | 无本地历史数据库/筛选页面 | P1 |
-| 网络连通性 | 最多约 60 个自选网站，多轮最小延迟，支持导入分类清单 | 部分实现 | 当前为固定少量站点和单轮 443/HTTPS 探测；无用户添加、分类导入、多轮最小值 | P1 |
-| WebRTC 泄漏 | 多个 STUN 服务器、候选地址、NAT 类型、ISP/地区、SDP Log | 仅外部浏览器入口/备用卡片 | Android 原生不能等价复现浏览器 WebRTC/SDP 环境；不能标为原生已实现 | P1（网页）/P2（原生） |
-| DNS Leak Test | 随机域名、多 DNS Endpoint、解析地域与 ISP | 部分实现 | 目前展示 Android Private DNS/DNS 服务器；不是递归 DNS 泄漏实验，也无多端点地理判定 | P1 |
-| 浏览器指纹 / Browser Information | Canvas/WebGL、JS、浏览器信息和指纹 | 仅外部网页入口 | 原生应用没有相同浏览器指纹上下文；需要 WebView/外部网页或明确降级 | P2 |
-| Invisibility Test | 独立检查是否使用代理/VPN | 部分实现 | v3.1 网络透明度/纯净度可提示代理、VPN、Tor，但没有独立工具页面和目标站点语义 | P2 |
-| Security Checklist | 258 项、12 个领域、浏览器本地保存进度 | 未实现 | 无清单数据、领域筛选或进度持久化 | P2 |
-| Speed Test | Cloudflare Edge 下载、上传、延迟、Jitter，可选包大小 | 部分实现 | 当前仅执行 Cloudflare 单次 HTTP 延迟，不进行上下行吞吐和 Jitter 测量 | P1 |
-| Global Latency Test | Globalping 全球探针，从多国探针 Ping 目标 | 未实现 | 无 Globalping API、国家/大洲选择器或全球探针结果 | P1 |
-| MTR Test | Globalping/全球探针路径追踪 | 未实现 | 无远端 MTR 任务、跳数、丢包、ASN 路径可视化 | P1 |
-| Proxy Rule Test | 验证代理软件规则是否按预期工作 | 未实现 | 无规则输入、目标分流和规则结果报告 | P2 |
-| Censorship Check | 多国检查网站是否被封锁及阻断方式 | 未实现 | 无 OONI/远端探针检查与国家维度结果 | P1 |
-| DNS Resolution | 多解析器并行解析，按国家分组；更深模式含 ECS/DNSSEC | 部分实现 | 当前是 Android 系统解析器查询一个目标；无多解析器、国家分组、ECS/DNSSEC | P1 |
-| Whois Search | 域名/IP Whois 查询 | 已实现基础版 | 已有 IANA/注册表链式查询和结果展示，但与上游丰富字段/多注册局体验仍有差距 | P1 |
-| MAC Lookup | 查询物理地址厂商和详情 | 未实现 | 无 MAC 输入、OUI 数据源或厂商展示 | P2 |
-| ASN Info | ASN 详情 | 部分实现 | ASN 作为当前 IP 信息字段展示；无独立 ASN 详情页 | P1 |
-| ASN 历史与上游拓扑 | 前缀历史公告、ASN 到 Tier 1 的上游路径 | 未实现 | 无 BGP/拓扑数据源、历史时间线或图形 | P2 |
-| Service Status | 官方状态页、实时可用性和近期事故 | 部分实现 | 当前是若干常用服务 443 端口连通性/耗时；不是官方 status page/incident 聚合 | P1 |
-| Shareable Reports | 只读可过期链接、Markdown、JSON | 未实现 | 无后端报告存储、过期 token、导出 Markdown/JSON | P1 |
-| Curl API | `curl` 获取 IP | 未实现 | Android APP 没有公开兼容 API 或部署端点 | P2 |
-| Earth Online | 全球互联网中断事件广播 | 未实现 | 无 outage feed、地图/实时事件面板 | P2 |
-| Dark Mode | 跟随系统并可手动切换 | 部分实现 | 当前有固定 Compose 主题；未确认完整系统跟随/手动切换 | P2 |
-| PWA / Chrome App | 可安装网页/PWA | 架构上不适用 | Android APK 不是 PWA；若要复刻需另建 Web 前端 | P2（另项目） |
-| Keyboard Shortcuts | `?` 查看快捷键，工具有键盘操作 | 未实现 | 移动端无快捷键体系 | P2 |
-| 多语言 | 公开项目当前 6 种语言并支持 locale pack | 未实现 | MyIPCheck 当前主要为简体中文，未见 locale 资源体系 | P1 |
-| AI/IPilot | 首页提供 Ask IPilot | 未实现 | 无 LLM 问答入口或报告解释助手 | P2 |
-| In-depth DNS Leak | ECS、DNSSEC、全部递归解析器 | 未实现 | 基础 Private DNS 展示不能算深度 DNS Leak | P2 |
-| In-depth Persona Check | 对比网站看到的信息与目标地区 | 未实现 | 无浏览器/多站点 persona 对比与报告 | P2 |
-| 授权与风险数据源 | MyIP 服务器侧配置 MaxMind GeoLite2 等；本项目可选 AbuseIPDB、ipapi.is、MaxMind Insights、IPHub | 已实现本地授权子集 | 已加入本地加密 Key、眼睛显示/隐藏和 v3.1 风险信号；不等于上游服务端配置和全部数据源覆盖 | P0 |
+| 当前与任意 IP 信息 | 多探针 IPv4/IPv6、地理、ASN、组织、时区、任意 IP 查询 | **已实现基础版** | 支持当前 IP 与输入 IPv4/IPv6 查询，提供公开默认源与可选授权源；字段丰富度和服务端源编排仍低于目标站点。 | P0 |
+| IP 历史 | 浏览器本地历史及筛选 | **已实现基础版** | 查询结果加密本地保存，最多 30 条并可清除；暂未实现按国家、类型等筛选。 | P1 |
+| 网络连通性 | 约 60 个可选网站、多轮最小延迟、导入和分类 | **部分实现** | HTTPS 目标可添加、删除、重置，最多 12 项并加密保存；目前为单轮测量，无大清单分类或导入格式。 | P1 |
+| 端口状态 / 探测 | 网络工具箱中的目标服务可用性能力 | **已实现，受限设计** | 用户管理最多 12 个**单主机单端口**目标（1–65535）；禁止路径、账户语法和端口范围，不能用作端口扫描器。 | P1 |
+| WebRTC 泄漏 | STUN、候选地址、NAT、SDP 及浏览器网络信息 | **架构不等价** | 原生 Android 不能等价复现浏览器 WebRTC/SDP 环境；仅可提供外部网页入口或单独的 WebView 方案。 | P1（网页）/P2（原生） |
+| DNS Leak Test | 随机域名、递归 DNS endpoint、地理/ISP 归因 | **部分实现** | 系统解析及 DoH 交叉的 A/AAAA/TXT/MX/NS/CNAME 查询、共识/差异摘要和文本分享已实现；不执行随机域名递归泄漏实验，也不做 DNS 出口地理归因。 | P1 |
+| DNS Resolution | 多解析器、国家分组、深度模式含 ECS/DNSSEC | **部分实现** | 已交叉系统、Cloudflare、Google Public DNS、Quad9，并显示结果差异；尚无国家分组、ECS/DNSSEC 校验或全部递归解析器枚举。 | P1 |
+| 浏览器指纹 / Browser Information | Canvas、WebGL、JS 特征及浏览器环境 | **架构不等价** | APK 没有同一浏览器上下文；不应将设备信息伪装为浏览器指纹检测。 | P2 |
+| Invisibility Test | 独立验证代理/VPN 使用状态 | **部分实现** | 透明度诊断可并列显示代理、VPN、Tor、IDC/ASN 等公开信号；没有独立的目标站点语义或专用报告页面。 | P2 |
+| Security Checklist | 大型安全清单、分类和本地进度 | **未实现** | 缺少清单数据、领域筛选和完成进度。 | P2 |
+| Speed Test | Edge 下载、上传、延迟、抖动、可选包大小 | **部分实现** | 已测 Cloudflare 轻量延迟、中位延迟、抖动及最多 1 MB 下载吞吐；无上传测速、长时多档位测试或运营商级对比。 | P1 |
+| Global Latency Test | Globalping 多国家/大洲探针 Ping | **已实现，受限调用** | 用户点击后最多从美国、德国、新加坡各请求 1 个探针、3 个 ping 包；遵守公开 API 配额，不代表本机延迟。 | P1 |
+| MTR Test | Globalping / 全球探针路径追踪 | **未实现** | 尚无远端 MTR 任务、跳数、丢包和 ASN 路径展示。 | P1 |
+| Proxy Rule Test | 验证代理软件规则分流是否符合预期 | **未实现** | 无规则输入、目标比对或分流报告。 | P2 |
+| Censorship Check | 多国网站可达性及阻断方式 | **部分实现** | 可查询 OONI 最多 5 条公开 Web Connectivity 历史元数据；不等于本机实时审查检测，也无多国主动任务。 | P1 |
+| Whois Search | IP/域名 Whois | **已实现基础版** | 已有 IANA/注册表链式查询和结果展示；仍缺更丰富的注册局字段整合与历史记录。 | P1 |
+| MAC Lookup | MAC/OUI 厂商查询和详情 | **已实现基础版** | 支持手动 MAC 查询 MACVendors 公开 OUI 数据；不读取设备 MAC，且对本地管理 MAC 不作可靠 OUI 厂商归因。 | P2 |
+| ASN Info | ASN 详情 | **已实现基础版** | 支持 RIPEstat ASN 概览和当前 IP ASN 信息；可继续丰富前缀、地理、注册信息和历史。 | P1 |
+| ASN 历史与拓扑 | 前缀历史、到 Tier 1 的上游路径 | **部分实现** | 已显示 RIS AS-path 左右邻居；它们是观测路径位置，不能自动解释为商业上下游，也没有历史时间线或图形。 | P2 |
+| Service Status | 官方状态、实时可用性、近期事故 | **部分实现** | 显示 GitHub、Cloudflare、OpenAI、Discord 的公开官方状态摘要，并与本机端口连通性分开；未做跨服务事故聚合与长期事件历史。 | P1 |
+| Shareable Reports | 过期链接、Markdown、JSON | **部分实现** | 支持 Android 系统分享本地文本摘要和 DNS 结果；没有服务器托管、过期 token、结构化 JSON/Markdown 报告。 | P1 |
+| Curl API | `curl` 获取 IP | **未实现** | Android 客户端并未部署对外兼容 API。 | P2 |
+| Earth Online | 全球互联网中断广播 | **未实现** | 无公共 outage feed 聚合、地图或事件面板。 | P2 |
+| Dark Mode | 系统跟随和手动切换 | **部分实现** | Compose 已提供应用主题；完整系统跟随和可选择主题策略仍应单列验证和完善。 | P2 |
+| PWA / Chrome App | 可安装 Web/PWA 体验 | **架构不适用** | Android APK 不等同 PWA；如需复刻，应另建 Web 前端。 | P2（另项目） |
+| Keyboard Shortcuts | 工具页快捷键和帮助 | **架构不适用** | 以触控移动端为主，没有桌面快捷键体系。 | P2 |
+| 多语言 | 多语言 locale pack | **未实现** | 当前主要为简体中文，尚无 Android locale 资源体系。 | P1 |
+| AI/IPilot | 首页 IP 问答和解释助手 | **未实现** | 无 LLM 助手，不应把固定规则说明称作 AI 问答。 | P2 |
+| In-depth DNS Leak | ECS、DNSSEC、递归解析器全量分析 | **未实现** | 多 DoH 结果差异是解析对比，不能替代深度 DNS Leak 测试。 | P2 |
+| In-depth Persona Check | 目标地区视角与网站可见信息对比 | **未实现** | 需要浏览器会话、远端视角或后端协作，原生本机字段不足以等价复刻。 | P2 |
+| 授权与风险数据源 | 服务器侧配置 MaxMind 等数据 | **已实现本地授权子集** | AbuseIPDB、ipapi.is、MaxMind Insights、IPHub 可在授权设置中启用，凭据经 Android Keystore AES-GCM 本地加密保存；空 Key 时回退公共默认源。 | P0 |
 
-## 当前 MyIPCheck 已实现的真实能力
+## v1.0.20 已实现能力及其边界
 
-源码当前的主页面组合包含 IP 信息、IPv6、增强纯净度诊断、连通性、Android 隐私/DNS、轻量网络测量、DNS 查询、Whois 查询、服务端口探测、设备环境和浏览器备用入口。网络仓库包含 `ipapi.co`、`ipwho.is`、ProxyCheck、Tor Project、AbuseIPDB、ipapi.is、MaxMind GeoIP Insights、IPHub 和 IANA/Whois 查询探针。
+当前单页原型已经包含 IP/IPv6、风险信号与透明度、HTTPS 连通性、Android 网络环境、轻量测速、DNS、Whois、端口探测、ASN、MAC、Globalping、OONI、服务状态、加密历史和文本分享。所有主动网络请求由用户操作触发；不设后台持续轮询，也不申请额外的敏感权限。
 
-这意味着 MyIPCheck 不是空壳，也不是只改了界面；但它目前的实现方式是**原生移动端安全子集**，而不是把目标网站所有浏览器工具和后端探针直接移植到 Android。
+| 模块 | 当前可靠表述 | 不应作出的表述 |
+|---|---|---|
+| 风险评分 | 是基于公开滥用行为证据、时效和覆盖度的可解释 0–100 信号指数。 | 不是 Ping0、账户风险、欺诈概率、信誉保证或绝对安全结论。 |
+| 单端口探测 | 是到用户指定的一台主机、一个端口的 TCP 可达性检查。 | 不是端口范围扫描、资产发现或安全漏洞扫描。 |
+| DNS 共识 | 是多个可用解析路径的答案对比和差异提示。 | 不是递归 DNS 泄漏、ECS、DNSSEC 或运营商劫持的确定性判断。 |
+| 官方状态 | 是供应商官方公开状态端点返回的摘要。 | 不等于手机到其服务的端到端可达性，也不能替代事故诊断。 |
+| 网络环境 | 是 Android `NetworkCapabilities` 和链路属性可见的网络状态。 | 不是实测速率、WebRTC、Canvas/WebGL、JavaScript 或网页指纹检测。 |
 
-## 最值得优先补齐的功能
+## 下一批的合理优先级
 
-### P0：纠正核心信息的复刻完整度
-
-第一，应补充“查询任意 IP”入口，使用户可以输入 IPv4/IPv6 并调用公开地理/ASN数据源，同时将当前 IP 卡和查询结果模型分开。第二，应把授权设置和 IP 数据源选择明确关联：无 Key 使用公开默认源；有 MaxMind 等 Key 才启用增强字段。第三，应在首页增加功能状态/覆盖度说明，避免用户把当前 IP 卡误认为完整的 IPCheck.ing 信息卡。
-
-### P1：形成真正可用的网络诊断工具箱
-
-建议先实现 IP 历史、本地可编辑连通性列表、完整上下行测速、真正的多解析器 DNS 检查、独立官方服务状态和更完整 Whois。随后再接入 Globalping 的全球延迟与 MTR；这些功能依赖远端任务、配额、超时、探针选择和结果回放，不能用本地 `Socket` 探测伪装。
-
-WebRTC Leak 和深度 DNS Leak 应优先以**可信 WebView/外部网页入口**实现，或新增一个明确的浏览器端 companion，而不是在原生 Android 中声称检测到了 JavaScript/SDP/Canvas 指纹。若目标是“功能复刻”而非“原生复刻”，最经济的方案是 Android 应用内嵌经过审计的 ipcheck.ing 工具页，并明确第三方网页隐私边界。
-
-### P2：补齐平台和高级工具
-
-安全清单、MAC Lookup、代理规则、审查检查、ASN 历史/上游拓扑、报告分享、Curl API、Earth Online、多语言、深色模式、快捷键和 In-depth Persona 是第二阶段。它们多数需要较大的数据、后端服务或 Web UI，不适合继续堆在单个 `MainActivity.kt` 中；应拆为模块化 Compose screen、Repository 和可测试的数据模型。
+第一优先级应当是**本地安全清单**、主题/多语言、查询/诊断结果的可复制与更丰富的结构化本地导出。这些能力不需要把浏览器字段或第三方后端冒充为本机结果。第二优先级可以在严格配额和明确远端语义的前提下扩展 Globalping MTR，以及改善 OONI 查询的筛选和结果展示。任何真正的 WebRTC、浏览器指纹、Persona 和深度 DNS Leak 功能均应采用独立 Web companion 或受控后端，并在界面清晰标识隐私、数据来源和非原生范围。
 
 ## 架构建议
 
-当前几乎所有 Android UI、网络请求、数据模型和评分逻辑集中在 `MainActivity.kt`，这适合原型，但不适合继续复刻上游工具箱。建议拆成：`feature/ipinfo`、`feature/connectivity`、`feature/leaks`、`feature/advanced`、`feature/report`、`data/provider` 和 `domain/scoring`。每个 Provider 应返回带来源、时间、字段覆盖和错误状态的标准结果；UI 不应直接解析 JSON。
+目前大部分 Android UI、网络请求、数据模型和评分逻辑仍集中于 `MainActivity.kt`，适合快速原型而不利于继续扩展。后续宜拆为 `feature/ipinfo`、`feature/connectivity`、`feature/dns`、`feature/advanced`、`feature/report`、`data/provider` 与 `domain/scoring`；每个 Provider 都应返回来源、时间、覆盖度、配额和错误状态的标准模型，UI 不应直接解析 JSON。
 
-全球探针、报告分享、官方状态和 OONI 等功能应通过后端代理或受控服务端完成，避免把第三方 token、跨域逻辑和速率限制直接放入 APK。对于本地公共源，必须保留超时、429、字段缺失和隐私说明；对于 MaxMind、IPHub 等授权源，必须坚持“空 Key 回退公共源，而不是空 Key 调用授权端点”。
+Globalping、OONI、官方状态和未来报告分享必须持续尊重公开 API 的使用限制与来源边界。对于 MaxMind、IPHub 等授权源，必须维持“空 Key 只走公共默认源”的行为，不能把密钥放入 URL、日志或 Git 历史。对于后续需后端的功能，应先建立最小、可审计的服务端权限和数据保留策略，再向 APK 提供接口。
 
 ## 参考资料
 
@@ -92,3 +87,7 @@ WebRTC Leak 和深度 DNS Leak 应优先以**可信 WebView/外部网页入口**
 [6] [OONI Explorer](https://explorer.ooni.org/)
 
 [7] [MaxMind GeoIP Web Services](https://dev.maxmind.com/geoip/docs/web-services/)
+
+[8] [IPHub API documentation](https://iphub.info/api)
+
+[9] [Android NetworkCapabilities reference](https://developer.android.com/reference/android/net/NetworkCapabilities)
