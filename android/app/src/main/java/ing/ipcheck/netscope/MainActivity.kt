@@ -1851,10 +1851,12 @@ private object NetworkRepository {
 
         // 透明度只表达当前网络属性，不参与主风险 R。
         val maxMindTor = maxMindInsights?.isTorExitNode == true
-        val torSources = listOf(torProjectResult == true, proxyCheck?.tor == true, ipApiIsSecurity?.isTor == true, maxMindTor, ipHubRisk?.isTor == true).count { it }
+        val torSources = listOf(torProjectResult == true, proxyCheck?.tor == true, abuseRisk?.isTor == true, ipApiIsSecurity?.isTor == true, maxMindTor, ipHubRisk?.isTor == true).count { it }
         val proxySources = listOf(proxyCheck?.proxy == true, ipApiIsSecurity?.isProxy == true, maxMindInsights?.isPublicProxy == true, ipHubRisk?.isProxy == true, ipHubRisk?.isResidentialProxy == true).count { it }
         val vpnSources = listOf(proxyCheck?.vpn == true, ipApiIsSecurity?.isVpn == true, maxMindInsights?.isAnonymousVpn == true).count { it }
         val relaySources = listOf(ipHubRisk?.isRelay == true).count { it }
+        val genericAnonymous = maxMindInsights?.isAnonymous == true
+        val ipHubNonResidential = ipHubRisk?.block == 1
         val transparencyRisk = when {
             torProjectResult == true -> 100.0
             torSources >= 2 -> 95.0
@@ -1864,6 +1866,7 @@ private object NetworkRepository {
             vpnSources >= 2 -> 55.0
             vpnSources == 1 -> 45.0
             relaySources > 0 -> 35.0
+            genericAnonymous || ipHubNonResidential -> 30.0
             else -> 0.0
         }
         val anonymityCoverage = listOf(
@@ -1878,6 +1881,8 @@ private object NetworkRepository {
             if (proxySources > 0) add("代理${if (proxySources >= 2) "（多源）" else ""}")
             if (vpnSources > 0) add("VPN${if (vpnSources >= 2) "（多源）" else ""}")
             if (relaySources > 0) add("中继")
+            if (genericAnonymous) add("匿名网络")
+            if (ipHubNonResidential) add("IPHub 非住宅网络")
             if (ipHubRisk?.block == 2) add("IPHub 低置信可疑")
         }
         signals += PuritySignal(
@@ -1892,6 +1897,7 @@ private object NetworkRepository {
             if (ipApiIsSecurity?.isDatacenter == true) add("ipapi.is 数据中心")
             if (maxMindInsights?.isHostingProvider == true) add("MaxMind 托管")
             if (ipHubRisk?.isHosting == true) add("IPHub 托管")
+            if (ipHubRisk?.block == 1) add("IPHub block=1")
             maxMindInsights?.network?.takeIf { it.isNotBlank() }?.let { add("CIDR $it") }
             ipHubRisk?.blockReason?.takeIf { it.isNotBlank() }?.let { add("IPHub：$it") }
         }
