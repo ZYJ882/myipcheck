@@ -12,9 +12,9 @@ android {
         applicationId = "ing.ipcheck.netscope"
         minSdk = 26
         targetSdk = 35
-        // v1.0.17 adds the first Android-native MyIP feature replication batch.
-        versionCode = providers.gradleProperty("versionCode").orNull?.toIntOrNull() ?: 1017
-        versionName = providers.gradleProperty("versionName").orNull ?: "1.0.17"
+        // v1.0.18 adds editable connectivity targets, ASN/MAC lookup and official status summaries.
+        versionCode = providers.gradleProperty("versionCode").orNull?.toIntOrNull() ?: 1018
+        versionName = providers.gradleProperty("versionName").orNull ?: "1.0.18"
     }
 
     val releaseStorePath = providers.gradleProperty("signingStoreFile").orNull

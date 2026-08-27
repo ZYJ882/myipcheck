@@ -38,6 +38,8 @@ import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Dns
 import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
@@ -231,12 +233,39 @@ private data class WhoisLookupResult(
     val error: String? = null
 )
 
+private data class AsnLookupResult(
+    val asn: String,
+    val name: String,
+    val description: String,
+    val countryCode: String,
+    val website: String,
+    val allocatedAt: String,
+    val error: String? = null
+)
+
+private data class MacLookupResult(
+    val mac: String,
+    val vendor: String,
+    val isLocallyAdministered: Boolean,
+    val error: String? = null
+)
+
 private data class PortProbeResult(
     val host: String,
     val port: Int,
     val status: CheckStatus,
     val latencyMs: Long? = null,
     val detail: String = "等待检测"
+)
+
+private data class OfficialStatusResult(
+    val name: String,
+    val endpoint: String,
+    val statusPage: String,
+    val indicator: String = "unknown",
+    val description: String = "尚未查询",
+    val updatedAt: String = "",
+    val error: String? = null
 )
 
 private data class NetworkSpeedResult(
@@ -393,6 +422,7 @@ private object SecureApiKeyStore {
     private const val CustomKey = "custom"
     private const val CustomEndpoint = "custom_endpoint"
     private const val IpHistoryKey = "ip_history"
+    private const val ConnectivityEndpointsKey = "connectivity_endpoints"
 
     fun load(context: Context): ApiKeyConfig {
         val preferences = context.getSharedPreferences(PreferencesName, Context.MODE_PRIVATE)
@@ -478,6 +508,42 @@ private object SecureApiKeyStore {
         context.getSharedPreferences(PreferencesName, Context.MODE_PRIVATE).edit().remove(IpHistoryKey).apply()
     }
 
+    fun loadConnectivityEndpoints(context: Context): List<EndpointResult> = runCatching {
+        val encrypted = context.getSharedPreferences(PreferencesName, Context.MODE_PRIVATE).getString(ConnectivityEndpointsKey, null)
+        val array = JSONArray(decrypt(encrypted).orEmpty())
+        buildList {
+            for (index in 0 until array.length()) {
+                val item = array.optJSONObject(index) ?: continue
+                val name = item.stringOrBlank("name")
+                val url = item.stringOrBlank("url")
+                val host = item.stringOrBlank("host")
+                if (name.isNotBlank() && url.isNotBlank() && host.isNotBlank() && isHttpsEndpoint(url)) {
+                    add(EndpointResult(name = name, host = host, url = url))
+                }
+            }
+        }.take(12)
+    }.getOrDefault(emptyList())
+
+    fun saveConnectivityEndpoints(context: Context, endpoints: List<EndpointResult>) {
+        val sanitized = endpoints.take(12).map { it.copy(status = CheckStatus.IDLE, latencyMs = null, detail = "等待检测") }
+        val serialized = JSONArray().apply {
+            sanitized.forEach { endpoint ->
+                put(JSONObject().apply {
+                    put("name", endpoint.name)
+                    put("host", endpoint.host)
+                    put("url", endpoint.url)
+                })
+            }
+        }
+        context.getSharedPreferences(PreferencesName, Context.MODE_PRIVATE).edit()
+            .putString(ConnectivityEndpointsKey, encrypt(serialized.toString()))
+            .apply()
+    }
+
+    fun clearConnectivityEndpoints(context: Context) {
+        context.getSharedPreferences(PreferencesName, Context.MODE_PRIVATE).edit().remove(ConnectivityEndpointsKey).apply()
+    }
+
     fun clear(context: Context) {
         context.getSharedPreferences(PreferencesName, Context.MODE_PRIVATE).edit().clear().apply()
     }
@@ -536,6 +602,12 @@ private val DefaultPortProbes = listOf(
     PortProbeResult("www.wikipedia.org", 443, CheckStatus.IDLE)
 )
 
+private val DefaultOfficialStatuses = listOf(
+    OfficialStatusResult("GitHub", "https://www.githubstatus.com/api/v2/status.json", "https://www.githubstatus.com"),
+    OfficialStatusResult("Cloudflare", "https://www.cloudflarestatus.com/api/v2/status.json", "https://www.cloudflarestatus.com"),
+    OfficialStatusResult("OpenAI", "https://status.openai.com/api/v2/status.json", "https://status.openai.com")
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun NetScopeApp() {
@@ -545,8 +617,9 @@ private fun NetScopeApp() {
     var ipLoading by remember { mutableStateOf(true) }
     var ipError by remember { mutableStateOf<String?>(null) }
     var privacy by remember { mutableStateOf(NetworkRepository.inspectPrivacy(context)) }
-    var endpoints by remember { mutableStateOf(DefaultEndpoints) }
+    var endpoints by remember { mutableStateOf(SecureApiKeyStore.loadConnectivityEndpoints(context).ifEmpty { DefaultEndpoints }) }
     var testingAll by remember { mutableStateOf(false) }
+    var showConnectivitySettings by remember { mutableStateOf(false) }
     var speedResult by remember { mutableStateOf<NetworkSpeedResult?>(null) }
     var speedTesting by remember { mutableStateOf(false) }
     var dnsHost by remember { mutableStateOf("example.com") }
@@ -555,8 +628,16 @@ private fun NetScopeApp() {
     var whoisQuery by remember { mutableStateOf("") }
     var whoisResult by remember { mutableStateOf<WhoisLookupResult?>(null) }
     var whoisLoading by remember { mutableStateOf(false) }
+    var asnQuery by remember { mutableStateOf("") }
+    var asnResult by remember { mutableStateOf<AsnLookupResult?>(null) }
+    var asnLoading by remember { mutableStateOf(false) }
+    var macQuery by remember { mutableStateOf("") }
+    var macResult by remember { mutableStateOf<MacLookupResult?>(null) }
+    var macLoading by remember { mutableStateOf(false) }
     var portProbes by remember { mutableStateOf(DefaultPortProbes) }
     var portsLoading by remember { mutableStateOf(false) }
+    var officialStatuses by remember { mutableStateOf(DefaultOfficialStatuses) }
+    var officialStatusLoading by remember { mutableStateOf(false) }
     var purityReport by remember { mutableStateOf<PurityReport?>(null) }
     var purityLoading by remember { mutableStateOf(false) }
     var purityError by remember { mutableStateOf<String?>(null) }
@@ -604,6 +685,17 @@ private fun NetScopeApp() {
             val checked = withContext(Dispatchers.IO) { NetworkRepository.testEndpoint(target) }
             endpoints = endpoints.map { if (it.name == target.name) checked else it }
         }
+    }
+
+    fun saveConnectivityEndpoints(updated: List<EndpointResult>) {
+        val cleaned = updated.take(12).map { it.copy(status = CheckStatus.IDLE, latencyMs = null, detail = "等待检测") }
+        runCatching { SecureApiKeyStore.saveConnectivityEndpoints(context, cleaned) }
+            .onSuccess { endpoints = cleaned; showConnectivitySettings = false }
+    }
+
+    fun resetConnectivityEndpoints() {
+        runCatching { SecureApiKeyStore.clearConnectivityEndpoints(context) }
+            .onSuccess { endpoints = DefaultEndpoints; showConnectivitySettings = false }
     }
 
     fun measureCloudflare() {
@@ -737,6 +829,53 @@ private fun NetScopeApp() {
         }
     }
 
+    fun lookupAsn() {
+        val normalized = asnQuery.trim().removePrefix("AS").removePrefix("as")
+        if (normalized.toLongOrNull()?.takeIf { it > 0 } == null) {
+            asnResult = AsnLookupResult("", "", "", "", "", "", "请输入有效 ASN，例如 AS13335")
+            return
+        }
+        scope.launch {
+            asnLoading = true
+            asnResult = withContext(Dispatchers.IO) {
+                runCatching { NetworkRepository.lookupAsn(normalized) }
+                    .getOrElse { AsnLookupResult("AS$normalized", "", "", "", "", "", it.asUserMessage()) }
+            }
+            asnLoading = false
+        }
+    }
+
+    fun lookupMac() {
+        val normalized = macQuery.uppercase().filter(Char::isLetterOrDigit)
+        if (normalized.length != 12 || normalized.any { it !in '0'..'9' && it !in 'A'..'F' }) {
+            macResult = MacLookupResult("", "", false, "请输入 12 位十六进制 MAC 地址")
+            return
+        }
+        scope.launch {
+            macLoading = true
+            macResult = withContext(Dispatchers.IO) {
+                runCatching { NetworkRepository.lookupMac(normalized) }
+                    .getOrElse { MacLookupResult(normalized, "", false, it.asUserMessage()) }
+            }
+            macLoading = false
+        }
+    }
+
+    fun refreshOfficialStatuses() {
+        scope.launch {
+            officialStatusLoading = true
+            officialStatuses = coroutineScope {
+                officialStatuses.map { status ->
+                    async(Dispatchers.IO) {
+                        runCatching { NetworkRepository.fetchOfficialStatus(status) }
+                            .getOrElse { error -> status.copy(error = error.asUserMessage(), description = "状态接口请求失败") }
+                    }
+                }.awaitAll()
+            }
+            officialStatusLoading = false
+        }
+    }
+
     fun runPortProbes() {
         scope.launch {
             portsLoading = true
@@ -752,8 +891,9 @@ private fun NetScopeApp() {
 
     LaunchedEffect(Unit) {
         refreshIpInfo()
-        runAllConnectivity()
-        runPurityDiagnosis()
+            runAllConnectivity()
+            runPurityDiagnosis()
+            refreshOfficialStatuses()
     }
 
     Scaffold(
@@ -850,7 +990,7 @@ private fun NetScopeApp() {
                     title = "IP 历史",
                     subtitle = "仅加密保存在本机，最多保留最近 30 条",
                     actionLabel = if (ipHistory.isEmpty()) null else "清除",
-                    onAction = if (ipHistory.isEmpty()) null else { { clearIpHistory() } }
+                    onAction = if (ipHistory.isEmpty()) null else ({ clearIpHistory() })
                 )
             }
             item {
@@ -862,7 +1002,7 @@ private fun NetScopeApp() {
                     title = "增强纯净度诊断",
                     subtitle = "公开风险源与网络信号的可解释独立评分",
                     actionLabel = if (purityLoading) "检测中" else "重新检测",
-                    onAction = if (purityLoading) null else { { runPurityDiagnosis() } }
+                    onAction = if (purityLoading) null else ({ runPurityDiagnosis() })
                 )
             }
             item {
@@ -877,9 +1017,9 @@ private fun NetScopeApp() {
                 SectionHeader(
                     icon = Icons.Outlined.NetworkCheck,
                     title = "网络连通性",
-                    subtitle = "检测常用服务是否可访问；延迟仅供参考",
-                    actionLabel = if (testingAll) "检测中" else "全部重试",
-                    onAction = if (testingAll) null else { { runAllConnectivity() } }
+                    subtitle = "检测 HTTPS 目标是否可访问；列表可自定义并加密保存在本机",
+                    actionLabel = "管理",
+                    onAction = { showConnectivitySettings = true }
                 )
             }
             item {
@@ -931,10 +1071,31 @@ private fun NetScopeApp() {
                 )
             }
             item {
+                AsnLookupCard(
+                    query = asnQuery,
+                    result = asnResult,
+                    loading = asnLoading,
+                    onQueryChange = { asnQuery = it },
+                    onLookup = { lookupAsn() }
+                )
+            }
+            item {
+                MacLookupCard(
+                    query = macQuery,
+                    result = macResult,
+                    loading = macLoading,
+                    onQueryChange = { macQuery = it },
+                    onLookup = { lookupMac() }
+                )
+            }
+            item {
                 ServiceStatusCard(
                     probes = portProbes,
+                    officialStatuses = officialStatuses,
                     loading = portsLoading,
-                    onProbe = { runPortProbes() }
+                    officialLoading = officialStatusLoading,
+                    onProbe = { runPortProbes() },
+                    onRefreshOfficial = { refreshOfficialStatuses() }
                 )
             }
             item {
@@ -949,6 +1110,15 @@ private fun NetScopeApp() {
         }
     }
 
+    if (showConnectivitySettings) {
+        ConnectivitySettingsDialog(
+            savedEndpoints = endpoints,
+            onDismiss = { showConnectivitySettings = false },
+            onSave = { saveConnectivityEndpoints(it) },
+            onReset = { resetConnectivityEndpoints() }
+        )
+    }
+
     if (showApiKeySettings) {
         ApiKeySettingsDialog(
             savedConfig = apiKeyConfig,
@@ -957,6 +1127,76 @@ private fun NetScopeApp() {
             onClear = { clearApiKeys() }
         )
     }
+}
+
+@Composable
+private fun ConnectivitySettingsDialog(
+    savedEndpoints: List<EndpointResult>,
+    onDismiss: () -> Unit,
+    onSave: (List<EndpointResult>) -> Unit,
+    onReset: () -> Unit
+) {
+    var draft by remember(savedEndpoints) { mutableStateOf(savedEndpoints) }
+    var name by remember { mutableStateOf("") }
+    var url by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf<String?>(null) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("连通性目标") },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                Text("仅允许 HTTPS 地址。目标清单最多 12 项，以加密形式保存在当前设备；保存后需手动重新检测。", color = MutedInk, fontSize = 12.sp, lineHeight = 18.sp)
+                Spacer(Modifier.height(12.dp))
+                draft.forEachIndexed { index, endpoint ->
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp)) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(endpoint.name, fontWeight = FontWeight.Medium, color = Ink, fontSize = 13.sp)
+                            Text(endpoint.url, color = MutedInk, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        IconButton(onClick = { draft = draft.filterIndexed { current, _ -> current != index } }) {
+                            Icon(Icons.Outlined.DeleteOutline, contentDescription = "删除 ${endpoint.name}", tint = Red)
+                        }
+                    }
+                }
+                HorizontalDivider(color = Border)
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("显示名称") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(value = url, onValueChange = { url = it }, label = { Text("HTTPS 地址") }, placeholder = { Text("https://example.com/health") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                if (error != null) Text(error.orEmpty(), color = Red, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp))
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(onClick = {
+                    val normalizedName = name.trim()
+                    val normalizedUrl = url.trim()
+                    val host = runCatching { Uri.parse(normalizedUrl).host.orEmpty() }.getOrDefault("")
+                    error = when {
+                        draft.size >= 12 -> "最多保存 12 个目标"
+                        normalizedName.isBlank() -> "请输入显示名称"
+                        !isHttpsEndpoint(normalizedUrl) -> "请输入完整 HTTPS 地址"
+                        host.isBlank() -> "地址缺少有效主机名"
+                        draft.any { it.name.equals(normalizedName, true) } -> "显示名称不能重复"
+                        else -> null
+                    }
+                    if (error == null) {
+                        draft = draft + EndpointResult(normalizedName, host, normalizedUrl)
+                        name = ""
+                        url = ""
+                    }
+                }, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(17.dp))
+                    Spacer(Modifier.width(7.dp))
+                    Text("添加 HTTPS 目标")
+                }
+            }
+        },
+        confirmButton = { Button(onClick = { onSave(draft) }) { Text("加密保存") } },
+        dismissButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onReset) { Text("恢复默认") }
+                OutlinedButton(onClick = onDismiss) { Text("取消") }
+            }
+        }
+    )
 }
 
 @Composable
@@ -1839,7 +2079,77 @@ private fun WhoisLookupCard(
 }
 
 @Composable
-private fun ServiceStatusCard(probes: List<PortProbeResult>, loading: Boolean, onProbe: () -> Unit) {
+private fun AsnLookupCard(
+    query: String,
+    result: AsnLookupResult?,
+    loading: Boolean,
+    onQueryChange: (String) -> Unit,
+    onLookup: () -> Unit
+) {
+    Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = CardSurface), elevation = CardDefaults.cardElevation(defaultElevation = 1.dp), modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(17.dp)) {
+            NativeToolHeader(Icons.Outlined.Router, "ASN 信息", "通过 RIPE NCC RIPEstat 查询自治系统公开登记与路由概览")
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(value = query, onValueChange = onQueryChange, label = { Text("ASN，例如 AS13335") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(10.dp))
+            Button(onClick = onLookup, enabled = !loading, colors = ButtonDefaults.buttonColors(containerColor = Blue)) {
+                if (loading) CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.White) else Icon(Icons.Outlined.Router, contentDescription = null, modifier = Modifier.size(17.dp))
+                Spacer(Modifier.width(7.dp)); Text(if (loading) "查询中" else "查询 ASN")
+            }
+            result?.let { item ->
+                Spacer(Modifier.height(12.dp)); HorizontalDivider(color = Border); Spacer(Modifier.height(10.dp))
+                if (item.error != null) ResultMessage(item.error, Red) else {
+                    Text(item.asn, fontWeight = FontWeight.Bold, fontSize = 19.sp, color = Ink)
+                    InfoLine(Icons.Outlined.Business, "名称", item.name.ifBlank { "—" })
+                    InfoLine(Icons.Outlined.LocationOn, "国家/地区", item.countryCode.ifBlank { "—" })
+                    InfoLine(Icons.Outlined.Schedule, "分配日期", item.allocatedAt.ifBlank { "—" })
+                    if (item.description.isNotBlank()) Text(item.description, fontSize = 11.sp, color = MutedInk, lineHeight = 16.sp, modifier = Modifier.padding(top = 5.dp))
+                    if (item.website.isNotBlank()) Text(item.website, fontSize = 11.sp, color = Blue, modifier = Modifier.padding(top = 5.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MacLookupCard(
+    query: String,
+    result: MacLookupResult?,
+    loading: Boolean,
+    onQueryChange: (String) -> Unit,
+    onLookup: () -> Unit
+) {
+    Card(shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = CardSurface), elevation = CardDefaults.cardElevation(defaultElevation = 1.dp), modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.padding(17.dp)) {
+            NativeToolHeader(Icons.Outlined.SettingsEthernet, "MAC Lookup", "查询 MAC 地址前缀的公开厂商登记，不读取设备 MAC")
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(value = query, onValueChange = onQueryChange, label = { Text("MAC，例如 FC:FB:FB:01:FA:21") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(10.dp))
+            Button(onClick = onLookup, enabled = !loading, colors = ButtonDefaults.buttonColors(containerColor = Blue)) {
+                if (loading) CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.White) else Icon(Icons.Outlined.Search, contentDescription = null, modifier = Modifier.size(17.dp))
+                Spacer(Modifier.width(7.dp)); Text(if (loading) "查询中" else "查询厂商")
+            }
+            result?.let { item ->
+                Spacer(Modifier.height(12.dp)); HorizontalDivider(color = Border); Spacer(Modifier.height(10.dp))
+                if (item.error != null) ResultMessage(item.error, Red) else {
+                    Text(item.mac.chunked(2).joinToString(":"), fontWeight = FontWeight.Bold, fontSize = 17.sp, color = Ink)
+                    InfoLine(Icons.Outlined.Business, "厂商", item.vendor)
+                    if (item.isLocallyAdministered) Text("此地址设置了本地管理位，常见于随机化/虚拟 MAC；公开 OUI 厂商仅供参考。", color = Amber, fontSize = 11.sp, lineHeight = 16.sp, modifier = Modifier.padding(top = 5.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ServiceStatusCard(
+    probes: List<PortProbeResult>,
+    officialStatuses: List<OfficialStatusResult>,
+    loading: Boolean,
+    officialLoading: Boolean,
+    onProbe: () -> Unit,
+    onRefreshOfficial: () -> Unit
+) {
     Card(
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = CardSurface),
@@ -1847,25 +2157,51 @@ private fun ServiceStatusCard(probes: List<PortProbeResult>, loading: Boolean, o
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(17.dp)) {
-            NativeToolHeader(Icons.Outlined.NetworkCheck, "服务状态", "从当前网络探测 HTTPS 端口可达性，不代表服务全球状态")
+            NativeToolHeader(Icons.Outlined.NetworkCheck, "服务状态", "区分当前网络端口可达性与厂商官方状态页摘要")
             Spacer(Modifier.height(9.dp))
+            Text("当前网络连通性", fontSize = 12.sp, color = MutedInk, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(5.dp))
             probes.forEachIndexed { index, probe ->
                 ServiceProbeLine(probe)
                 if (index < probes.lastIndex) HorizontalDivider(color = Border, modifier = Modifier.padding(vertical = 8.dp))
             }
             Spacer(Modifier.height(12.dp))
-            OutlinedButton(onClick = onProbe, enabled = !loading) {
-                if (loading) {
-                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Blue)
-                    Spacer(Modifier.width(8.dp))
-                    Text("探测中")
-                } else {
-                    Icon(Icons.Outlined.NetworkCheck, contentDescription = null, modifier = Modifier.size(17.dp))
-                    Spacer(Modifier.width(7.dp))
-                    Text("重新探测")
+            HorizontalDivider(color = Border)
+            Spacer(Modifier.height(10.dp))
+            Text("厂商官方状态摘要", fontSize = 12.sp, color = MutedInk, fontWeight = FontWeight.SemiBold)
+            Text("来自各厂商公开状态页；不代表本机是否一定可访问。", fontSize = 10.sp, color = MutedInk, lineHeight = 15.sp, modifier = Modifier.padding(top = 3.dp, bottom = 7.dp))
+            officialStatuses.forEachIndexed { index, status ->
+                OfficialStatusLine(status)
+                if (index < officialStatuses.lastIndex) HorizontalDivider(color = Border, modifier = Modifier.padding(vertical = 8.dp))
+            }
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onProbe, enabled = !loading, modifier = Modifier.weight(1f)) {
+                    if (loading) CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Blue) else Icon(Icons.Outlined.NetworkCheck, contentDescription = null, modifier = Modifier.size(17.dp))
+                    Spacer(Modifier.width(7.dp)); Text(if (loading) "探测中" else "端口探测")
+                }
+                OutlinedButton(onClick = onRefreshOfficial, enabled = !officialLoading, modifier = Modifier.weight(1f)) {
+                    if (officialLoading) CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Blue) else Icon(Icons.Outlined.Refresh, contentDescription = null, modifier = Modifier.size(17.dp))
+                    Spacer(Modifier.width(7.dp)); Text(if (officialLoading) "刷新中" else "刷新官方")
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun OfficialStatusLine(status: OfficialStatusResult) {
+    val isOkay = status.indicator.equals("none", true)
+    val isError = status.error != null
+    val color = when { isError -> Red; isOkay -> Green; else -> Amber }
+    val background = when { isError -> Color(0xFFFFECEC); isOkay -> SoftGreen; else -> SoftAmber }
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { }) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(status.name, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = Ink)
+            Text(status.error ?: status.description, fontSize = 11.sp, color = if (isError) Red else MutedInk, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (status.updatedAt.isNotBlank()) Text("更新：${status.updatedAt.take(19).replace("T", " ")}", fontSize = 10.sp, color = MutedInk)
+        }
+        StatusBadge(if (isError) "错误" else if (isOkay) "正常" else "注意", color, background)
     }
 }
 
@@ -2141,6 +2477,59 @@ private object NetworkRepository {
             status = if (statusCode == 0) "正常" else "DNS $statusCode",
             error = if (statusCode == null) "未返回 DNS 状态" else null
         )
+    }
+
+    fun fetchOfficialStatus(source: OfficialStatusResult): OfficialStatusResult {
+        val json = JSONObject(getText(source.endpoint))
+        val status = json.optJSONObject("status") ?: throw IllegalStateException("官方状态页未返回状态摘要")
+        val page = json.optJSONObject("page")
+        return source.copy(
+            indicator = status.stringOrBlank("indicator").ifBlank { "unknown" },
+            description = status.stringOrBlank("description").ifBlank { "官方状态页未提供说明" },
+            updatedAt = page?.stringOrBlank("updated_at").orEmpty(),
+            error = null
+        )
+    }
+
+    fun lookupAsn(rawAsn: String): AsnLookupResult {
+        val value = rawAsn.removePrefix("AS").removePrefix("as").trim()
+        val encoded = URLEncoder.encode("AS$value", Charsets.UTF_8.name())
+        val json = JSONObject(getText("https://stat.ripe.net/data/as-overview/data.json?resource=$encoded"))
+        if (!json.stringOrBlank("status").equals("ok", ignoreCase = true)) {
+            throw IllegalStateException("RIPEstat 未返回可用 ASN 概览")
+        }
+        val data = json.optJSONObject("data") ?: throw IllegalStateException("RIPEstat ASN 概览缺少数据")
+        val block = data.optJSONObject("block")
+        val holder = data.stringOrBlank("holder")
+        val routeState = when (data.booleanOrNull("announced")) {
+            true -> "当前可见前缀：是（至少 10 个 RIS 全量对等体可见）"
+            false -> "当前可见前缀：否或仅作转接"
+            null -> "当前可见前缀：未知"
+        }
+        val allocation = listOfNotNull(
+            block?.stringOrBlank("name")?.takeIf { it.isNotBlank() },
+            block?.stringOrBlank("desc")?.takeIf { it.isNotBlank() }
+        ).joinToString(" · ")
+        return AsnLookupResult(
+            asn = "AS${data.stringOrBlank("resource").ifBlank { value }}",
+            name = holder.ifBlank { allocation.ifBlank { "未提供登记持有人" } },
+            description = listOf(routeState, allocation).filter { it.isNotBlank() }.joinToString("\n"),
+            countryCode = "",
+            website = "来源：RIPEstat ASN Overview",
+            allocatedAt = ""
+        )
+    }
+
+    fun lookupMac(rawMac: String): MacLookupResult {
+        val mac = rawMac.uppercase().filter(Char::isLetterOrDigit)
+        val firstByte = mac.take(2).toIntOrNull(16) ?: throw IllegalArgumentException("MAC 地址格式无效")
+        val locallyAdministered = (firstByte and 0x02) != 0
+        if (locallyAdministered) {
+            return MacLookupResult(mac, "本地管理 / 随机化地址", true)
+        }
+        val vendor = getText("https://api.macvendors.com/${URLEncoder.encode(mac, Charsets.UTF_8.name())}").trim()
+        if (vendor.isBlank()) throw IllegalStateException("未查到该 MAC 前缀的厂商登记")
+        return MacLookupResult(mac, vendor, false)
     }
 
     fun lookupWhois(query: String): WhoisLookupResult {
