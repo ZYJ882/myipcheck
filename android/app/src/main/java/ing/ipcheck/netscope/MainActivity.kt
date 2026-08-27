@@ -27,6 +27,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -37,6 +39,8 @@ import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Dns
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material.icons.outlined.Hub
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Language
@@ -223,9 +227,9 @@ private data class PuritySignal(
 
 private data class PurityRiskBucket(
     val title: String,
-    val risk: Double,
-    val cap: Double,
-    val detail: String
+    val value: String,
+    val detail: String,
+    val tone: PurityTone
 )
 
 private data class PurityReport(
@@ -233,8 +237,6 @@ private data class PurityReport(
     val risk: Double,
     val abuseRisk: Double,
     val transparencyRisk: Double,
-    val contextRisk: Double,
-    val observabilityRisk: Double,
     val coverage: Double,
     val coverageLabel: String,
     val coverageDetail: String,
@@ -283,6 +285,9 @@ private data class RiskIntelligence(
 private data class ApiKeyConfig(
     val abuseIpDbKey: String = "",
     val ipApiKey: String = "",
+    val maxMindAccountId: String = "",
+    val maxMindLicenseKey: String = "",
+    val ipHubKey: String = "",
     val customKey: String = "",
     val customEndpoint: String = ""
 )
@@ -290,6 +295,7 @@ private data class ApiKeyConfig(
 private data class AbuseIpDbRisk(
     val confidenceScore: Int?,
     val totalReports: Int?,
+    val distinctUsers: Int?,
     val isTor: Boolean?,
     val usageType: String,
     val lastReportedAt: String
@@ -308,11 +314,42 @@ private data class IpApiIsSecurity(
     val asnOrganization: String
 )
 
+private data class MaxMindInsights(
+    val isAnonymous: Boolean?,
+    val isAnonymousVpn: Boolean?,
+    val isHostingProvider: Boolean?,
+    val isPublicProxy: Boolean?,
+    val isResidentialProxy: Boolean?,
+    val isTorExitNode: Boolean?,
+    val anonymizerConfidence: Int?,
+    val network: String,
+    val asn: String,
+    val organization: String,
+    val isp: String,
+    val connectionType: String
+)
+
+private data class IpHubRisk(
+    val block: Int?,
+    val blockReason: String,
+    val isProxy: Boolean?,
+    val isTor: Boolean?,
+    val isHosting: Boolean?,
+    val isRelay: Boolean?,
+    val isResidentialProxy: Boolean?,
+    val asn: String,
+    val isp: String,
+    val countryCode: String
+)
+
 private object SecureApiKeyStore {
     private const val PreferencesName = "secure_api_keys"
     private const val KeyAlias = "netscope_api_key_encryption"
     private const val AbuseKey = "abuseipdb"
     private const val IpApiIsKey = "ipapi_is"
+    private const val MaxMindAccountIdKey = "maxmind_account_id"
+    private const val MaxMindLicenseKey = "maxmind_license_key"
+    private const val IpHubKey = "iphub"
     private const val LegacyIpApiComKey = "ipapi"
     private const val CustomKey = "custom"
     private const val CustomEndpoint = "custom_endpoint"
@@ -322,6 +359,9 @@ private object SecureApiKeyStore {
         return ApiKeyConfig(
             abuseIpDbKey = decrypt(preferences.getString(AbuseKey, null)).orEmpty(),
             ipApiKey = decrypt(preferences.getString(IpApiIsKey, null)).orEmpty(),
+            maxMindAccountId = decrypt(preferences.getString(MaxMindAccountIdKey, null)).orEmpty(),
+            maxMindLicenseKey = decrypt(preferences.getString(MaxMindLicenseKey, null)).orEmpty(),
+            ipHubKey = decrypt(preferences.getString(IpHubKey, null)).orEmpty(),
             customKey = decrypt(preferences.getString(CustomKey, null)).orEmpty(),
             customEndpoint = decrypt(preferences.getString(CustomEndpoint, null)).orEmpty()
         )
@@ -331,6 +371,9 @@ private object SecureApiKeyStore {
         context.getSharedPreferences(PreferencesName, Context.MODE_PRIVATE).edit()
             .putString(AbuseKey, config.abuseIpDbKey.takeIf { it.isNotBlank() }?.let(::encrypt))
             .putString(IpApiIsKey, config.ipApiKey.takeIf { it.isNotBlank() }?.let(::encrypt))
+            .putString(MaxMindAccountIdKey, config.maxMindAccountId.takeIf { it.isNotBlank() }?.let(::encrypt))
+            .putString(MaxMindLicenseKey, config.maxMindLicenseKey.takeIf { it.isNotBlank() }?.let(::encrypt))
+            .putString(IpHubKey, config.ipHubKey.takeIf { it.isNotBlank() }?.let(::encrypt))
             .remove(LegacyIpApiComKey)
             .putString(CustomKey, config.customKey.takeIf { it.isNotBlank() }?.let(::encrypt))
             .putString(CustomEndpoint, config.customEndpoint.takeIf { it.isNotBlank() }?.let(::encrypt))
@@ -881,41 +924,36 @@ private fun ApiKeySettingsDialog(
 ) {
     var abuseKey by remember(savedConfig) { mutableStateOf(savedConfig.abuseIpDbKey) }
     var ipApiKey by remember(savedConfig) { mutableStateOf(savedConfig.ipApiKey) }
+    var maxMindAccountId by remember(savedConfig) { mutableStateOf(savedConfig.maxMindAccountId) }
+    var maxMindLicenseKey by remember(savedConfig) { mutableStateOf(savedConfig.maxMindLicenseKey) }
+    var ipHubKey by remember(savedConfig) { mutableStateOf(savedConfig.ipHubKey) }
     var customEndpoint by remember(savedConfig) { mutableStateOf(savedConfig.customEndpoint) }
     var customKey by remember(savedConfig) { mutableStateOf(savedConfig.customKey) }
     val endpointIsValid = isHttpsEndpoint(customEndpoint)
     val customConfigured = customEndpoint.isNotBlank() && customKey.isNotBlank()
     val customPairIsValid = customEndpoint.isBlank() == customKey.isBlank()
-    val formIsValid = endpointIsValid && customPairIsValid
-    val configuredCount = listOf(abuseKey.isNotBlank(), ipApiKey.isNotBlank(), customConfigured).count { it }
+    val maxMindPairIsValid = maxMindAccountId.isBlank() == maxMindLicenseKey.isBlank()
+    val maxMindConfigured = maxMindAccountId.isNotBlank() && maxMindLicenseKey.isNotBlank()
+    val formIsValid = endpointIsValid && customPairIsValid && maxMindPairIsValid
+    val configuredCount = listOf(abuseKey.isNotBlank(), ipApiKey.isNotBlank(), maxMindConfigured, ipHubKey.isNotBlank(), customConfigured).count { it }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         icon = { Icon(Icons.Outlined.VpnKey, contentDescription = null, tint = Blue) },
         title = { Text("授权数据源 Key", fontWeight = FontWeight.Bold, color = Ink) },
         text = {
-            Column {
-                Text("Key 与自定义请求地址均使用 Android Keystore 加密保存在本机，不上传到本项目服务器、不写入日志。", fontSize = 12.sp, color = MutedInk, lineHeight = 18.sp)
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                Text("预置端点仅在填写对应 Key 后按需查询。Key 使用 Android Keystore AES-GCM 加密保存在本机，不上传到项目服务器、不写入日志，也不会出现在请求 URL 中。", fontSize = 12.sp, color = MutedInk, lineHeight = 18.sp)
                 Spacer(Modifier.height(12.dp))
-                OutlinedTextField(
-                    value = abuseKey,
-                    onValueChange = { abuseKey = it.trim() },
-                    label = { Text("AbuseIPDB API Key") },
-                    supportingText = { Text("用于 abuseConfidenceScore、报告数、Tor 与使用类型提示") },
-                    visualTransformation = PasswordVisualTransformation(),
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
+                SecretTextField(abuseKey, { abuseKey = it.trim() }, "AbuseIPDB API Key", "公开滥用置信分、报告量、独立报告者与最近报告")
                 Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = ipApiKey,
-                    onValueChange = { ipApiKey = it.trim() },
-                    label = { Text("ipapi.is API Key") },
-                    supportingText = { Text("用于 VPN、代理、Tor、托管、滥用与爬虫提示") },
-                    visualTransformation = PasswordVisualTransformation(),
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
+                SecretTextField(ipApiKey, { ipApiKey = it.trim() }, "ipapi.is API Key", "VPN、代理、Tor、托管、滥用与爬虫字段")
+                Spacer(Modifier.height(8.dp))
+                SecretTextField(maxMindAccountId, { maxMindAccountId = it.trim() }, "MaxMind Account ID", "与 License Key 成对使用，调用 GeoIP Insights")
+                Spacer(Modifier.height(8.dp))
+                SecretTextField(maxMindLicenseKey, { maxMindLicenseKey = it.trim() }, "MaxMind License Key", if (!maxMindPairIsValid) "请同时填写 MaxMind Account ID 与 License Key" else "HTTPS Basic Auth；匿名化和网络上下文字段")
+                Spacer(Modifier.height(8.dp))
+                SecretTextField(ipHubKey, { ipHubKey = it.trim() }, "IPHub API Key", "调用 IPHub v2.2；代理、Tor、托管与低置信上下文")
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
                     value = customEndpoint,
@@ -923,7 +961,7 @@ private fun ApiKeySettingsDialog(
                     label = { Text("自定义请求地址（HTTPS，可选）") },
                     supportingText = {
                         Text(
-                            if (!endpointIsValid) "请输入完整 HTTPS 地址，例如：https://api.example.com/v1/check" else if (!customPairIsValid) "自定义地址与 Key 需要同时填写" else "例如：https://api.example.com/v1/check",
+                            if (!endpointIsValid) "请输入完整 HTTPS 地址，例如：https://api.example.com/v1/check" else if (!customPairIsValid) "自定义地址与 Key 需要同时填写" else "当前仅加密保存，不会自动请求或参与评分",
                             color = if (formIsValid) MutedInk else Red
                         )
                     },
@@ -932,18 +970,10 @@ private fun ApiKeySettingsDialog(
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = customKey,
-                    onValueChange = { customKey = it.trim() },
-                    label = { Text("自定义 API Key（可选）") },
-                    supportingText = { Text(if (!customPairIsValid) "请同时填写 HTTPS 请求地址与自定义 Key" else "会与请求地址配套保存；当前版本不会自动请求或参与评分") },
-                    visualTransformation = PasswordVisualTransformation(),
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
+                SecretTextField(customKey, { customKey = it.trim() }, "自定义 API Key（可选）", if (!customPairIsValid) "请同时填写 HTTPS 请求地址与自定义 Key" else "仅与自定义地址配套本地保存")
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    if (configuredCount > 0) "已配置 $configuredCount / 3 个数据源；保存后会重新执行内置纯净度诊断。" else "未配置时，APP 仍只使用不需要 Key 的公开基础诊断。",
+                    if (configuredCount > 0) "已配置 $configuredCount / 5 个授权数据源；保存后会重新执行诊断。" else "未配置时，APP 仍使用无需 Key 的基础公开诊断。",
                     fontSize = 11.sp,
                     color = MutedInk
                 )
@@ -951,7 +981,7 @@ private fun ApiKeySettingsDialog(
         },
         confirmButton = {
             Button(
-                onClick = { onSave(ApiKeyConfig(abuseKey, ipApiKey, customKey, customEndpoint)) },
+                onClick = { onSave(ApiKeyConfig(abuseKey, ipApiKey, maxMindAccountId, maxMindLicenseKey, ipHubKey, customKey, customEndpoint)) },
                 enabled = formIsValid
             ) { Text("加密保存") }
         },
@@ -963,6 +993,34 @@ private fun ApiKeySettingsDialog(
                 OutlinedButton(onClick = onDismiss) { Text("取消") }
             }
         }
+    )
+}
+
+@Composable
+private fun SecretTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    label: String,
+    supportingText: String
+) {
+    var visible by remember { mutableStateOf(false) }
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = { Text(label) },
+        supportingText = { Text(supportingText) },
+        visualTransformation = if (visible) androidx.compose.ui.text.input.VisualTransformation.None else PasswordVisualTransformation(),
+        trailingIcon = {
+            IconButton(onClick = { visible = !visible }) {
+                Icon(
+                    imageVector = if (visible) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
+                    contentDescription = if (visible) "隐藏 $label" else "显示 $label",
+                    tint = MutedInk
+                )
+            }
+        },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth()
     )
 }
 
@@ -1010,9 +1068,9 @@ private fun PurityDiagnosisCard(
                         }
                     }
                     Spacer(Modifier.height(12.dp))
-                    Text("已识别公开风险：${formatRisk(report.risk)} / 100；证据覆盖：${formatRisk(report.coverage)} / 100（${report.coverageLabel}）。", fontSize = 11.sp, color = MutedInk)
+                    Text("公开滥用风险：${formatRisk(report.risk)} / 100；网络透明度：${formatRisk(report.transparencyRisk)} / 100；证据覆盖：${formatRisk(report.coverage)} / 100（${report.coverageLabel}）。", fontSize = 11.sp, color = MutedInk, lineHeight = 16.sp)
                     Spacer(Modifier.height(4.dp))
-                    Text("分层：直接行为 ${formatRisk(report.abuseRisk)} / 70 · 匿名化 ${formatRisk(report.transparencyRisk)} / 15 · 网络上下文 ${formatRisk(report.contextRisk)} / 10 · 出口观测 ${formatRisk(report.observabilityRisk)} / 5", fontSize = 10.sp, color = MutedInk, lineHeight = 15.sp)
+                    Text("主分只反映公开滥用风险的反向展示；Tor、代理、VPN、IDC 与 ASN 单列为透明度或网络上下文，不被当作历史恶意。", fontSize = 10.sp, color = MutedInk, lineHeight = 15.sp)
                     Spacer(Modifier.height(9.dp))
                     report.buckets.forEach { bucket ->
                         PurityRiskBucketLine(bucket)
@@ -1028,7 +1086,7 @@ private fun PurityDiagnosisCard(
                     Spacer(Modifier.height(10.dp))
                     Text("检测时间：${report.checkedAt}", fontSize = 11.sp, color = MutedInk)
                     Spacer(Modifier.height(7.dp))
-                    Text("说明：本报告将公开滥用、匿名化/透明度、网络上下文和出口可观测性分层计算；未覆盖字段不会被当作无风险。分数是可解释的公开风险信号指数，不是欺诈概率，也不是任何第三方服务的专有风控值。", fontSize = 11.sp, color = MutedInk, lineHeight = 16.sp)
+                    Text("说明：每一分均由来源、字段、时间和连续公式可回放计算；未覆盖字段不会被当作无风险。主分是可解释的公开滥用风险信号指数，不是欺诈概率，也不是任何第三方服务的专有风控值。", fontSize = 11.sp, color = MutedInk, lineHeight = 16.sp)
                 }
             }
             else -> {
@@ -1054,11 +1112,7 @@ private fun PurityDiagnosisCard(
 
 @Composable
 private fun PurityRiskBucketLine(bucket: PurityRiskBucket) {
-    val tone = when {
-        bucket.risk == 0.0 -> PurityTone.CONSISTENT
-        bucket.risk * 2 >= bucket.cap -> PurityTone.NOTICE
-        else -> PurityTone.NEUTRAL
-    }
+    val tone = bucket.tone
     val color = when (tone) {
         PurityTone.CONSISTENT -> Green
         PurityTone.NOTICE -> Amber
@@ -1078,7 +1132,7 @@ private fun PurityRiskBucketLine(bucket: PurityRiskBucket) {
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                imageVector = if (bucket.risk == 0.0) Icons.Outlined.CheckCircle else Icons.Outlined.Info,
+                imageVector = if (tone == PurityTone.CONSISTENT) Icons.Outlined.CheckCircle else Icons.Outlined.Info,
                 contentDescription = null,
                 tint = color,
                 modifier = Modifier.size(13.dp)
@@ -1090,7 +1144,7 @@ private fun PurityRiskBucketLine(bucket: PurityRiskBucket) {
             Text(bucket.detail, fontSize = 10.sp, color = MutedInk, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Spacer(Modifier.width(8.dp))
-        Text("${formatRisk(bucket.risk)} / ${formatRisk(bucket.cap)}", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = color)
+        Text(bucket.value, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = color)
     }
 }
 
@@ -1521,17 +1575,19 @@ private fun BrowserFallbackCard(context: Context) {
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(17.dp)) {
-            NativeToolHeader(Icons.Outlined.ArrowOutward, "浏览器专属能力（备用）", "仅在需要 WebRTC、JavaScript 指纹或真实多地区探针时使用")
+            NativeToolHeader(Icons.Outlined.ArrowOutward, "网页专属诊断（外部入口）", "仅在需要浏览器 JavaScript、WebRTC、Canvas/WebGL、TLS 或 DNS 泄漏自检时使用")
             Spacer(Modifier.height(8.dp))
-            Text("以上 DNS、Whois、服务状态和设备环境均已在 APP 内完成。", fontSize = 12.sp, color = MutedInk)
-            Spacer(Modifier.height(11.dp))
+            Text("原生 Android 已完成 DNS、Whois、服务状态和设备网络信息；不会伪造浏览器指纹或 WebRTC 测试结论。", fontSize = 12.sp, color = MutedInk, lineHeight = 18.sp)
+            Spacer(Modifier.height(10.dp))
             OutlinedButton(onClick = {
-                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://ipcheck.ing/tools/browserinfo")))
+                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://browserleaks.com")))
             }) {
                 Icon(Icons.Outlined.ArrowOutward, contentDescription = null, modifier = Modifier.size(17.dp))
                 Spacer(Modifier.width(7.dp))
-                Text("需要时打开浏览器诊断")
+                Text("打开 BrowserLeaks 自检")
             }
+            Spacer(Modifier.height(8.dp))
+            Text("EdgeOne MyIP 本次无法解析，NSTool 未公开可审计 IP API；二者不会被自动请求、不会进入评分，也不会下载任何外部 APK。", fontSize = 11.sp, color = MutedInk, lineHeight = 16.sp)
         }
     }
 }
@@ -1693,331 +1749,235 @@ private object NetworkRepository {
         val ipv4 = fetchIp(IPIFY_V4)
         val ipApi = runCatching { probeIpApi(ipv4) }.getOrNull()
         val ipWhoIs = runCatching { probeIpWhoIs() }.getOrNull()
-        val externalRisk = runCatching { probeProxyRisk(ipv4) }.getOrNull()
-        val abuseRisk = apiKeys.abuseIpDbKey.takeIf { it.isNotBlank() }?.let { key -> runCatching { probeAbuseIpDb(ipv4, key) }.getOrNull() }
-        val ipApiIsSecurity = apiKeys.ipApiKey.takeIf { it.isNotBlank() }?.let { key -> runCatching { probeIpApiIsSecurity(ipv4, key) }.getOrNull() }
+        val proxyCheck = runCatching { probeProxyRisk(ipv4) }.getOrNull()
+        val abuseRisk = apiKeys.abuseIpDbKey.takeIf { it.isNotBlank() }?.let { key ->
+            runCatching { probeAbuseIpDb(ipv4, key) }.getOrNull()
+        }
+        val ipApiIsSecurity = apiKeys.ipApiKey.takeIf { it.isNotBlank() }?.let { key ->
+            runCatching { probeIpApiIsSecurity(ipv4, key) }.getOrNull()
+        }
+        val maxMindInsights = apiKeys.maxMindAccountId.takeIf { it.isNotBlank() }
+            ?.takeIf { apiKeys.maxMindLicenseKey.isNotBlank() }
+            ?.let { accountId -> runCatching { probeMaxMindInsights(ipv4, accountId, apiKeys.maxMindLicenseKey) }.getOrNull() }
+        val ipHubRisk = apiKeys.ipHubKey.takeIf { it.isNotBlank() }?.let { key ->
+            runCatching { probeIpHub(ipv4, key) }.getOrNull()
+        }
         val torProjectResult = runCatching { probeTorProject() }.getOrNull()
         val ipv6 = runCatching { fetchIp(IPIFY_DUAL).takeIf { it.contains(":") } }.getOrNull()
         val ipv6Geo = ipv6?.let { runCatching { probeIpApi(it) }.getOrNull() }
-        if (ipApi == null && ipWhoIs == null) {
-            throw IllegalStateException("公开 IP 属性数据源暂不可用")
-        }
+        if (ipApi == null && ipWhoIs == null) throw IllegalStateException("公开 IP 属性数据源暂不可用")
 
         fun ageDays(timestamp: String): Long? = runCatching {
             Duration.between(OffsetDateTime.parse(timestamp).toInstant(), Instant.now()).toDays().coerceAtLeast(0)
         }.getOrNull()
 
-        fun freshnessFactor(timestamp: String, fallback: Double = 0.70): Double {
-            val days = ageDays(timestamp) ?: return fallback
-            return (0.45 + 0.55 * exp(-days / 21.0)).coerceIn(0.45, 1.0)
-        }
-
-        fun proxyCheckReliability(): Double {
-            val confidence = externalRisk?.confidence?.coerceIn(0, 100)?.div(100.0) ?: 0.60
-            return ((0.30 + 0.70 * confidence) * freshnessFactor(externalRisk?.detectionLastSeen.orEmpty())).coerceIn(0.25, 1.0)
-        }
-
-        fun abuseScoreRisk(score: Int): Double = 34.0 * (score.coerceIn(0, 100) / 100.0).pow(1.35)
-        fun reportVolumeRisk(reports: Int): Double = 2.0 * ln(1.0 + reports.coerceAtLeast(0)) / ln(101.0)
-        fun vendorRisk(score: Int?): Double {
-            val raw = score?.coerceIn(0, 100) ?: return 0.0
-            return 16.0 * (raw / 100.0).pow(1.20) * proxyCheckReliability()
-        }
-        fun historyRisk(events: Int): Double {
-            if (events <= 0) return 0.0
-            return 4.0 * ln(1.0 + events) / ln(101.0) * proxyCheckReliability()
+        fun volume(value: Int, tau: Double): Double = (1.0 - exp(-value.coerceAtLeast(0) / tau)).coerceIn(0.0, 1.0)
+        fun decay(days: Long?, halfLife: Double, unknown: Double = 0.60): Double =
+            days?.let { 2.0.pow(-it / halfLife) }?.coerceIn(0.0, 1.0) ?: unknown
+        fun evidence(cap: Double, quality: Double, count: Int, tau: Double, days: Long?, halfLife: Double, resolution: Double = 1.0, unknownTime: Double = 0.60): Double =
+            (cap * quality * volume(count, tau) * decay(days, halfLife, unknownTime) * resolution).coerceIn(0.0, 0.95)
+        fun combinedEvidence(values: List<Double>): Double = values.filter { it > 0.0 }.maxOrNull()?.coerceAtMost(0.95) ?: 0.0
+        fun sourceState(configured: Boolean, available: Boolean, title: String): Pair<String, PurityTone> = when {
+            !configured -> "未配置" to PurityTone.NEUTRAL
+            !available -> "未覆盖" to PurityTone.NEUTRAL
+            else -> "已覆盖" to PurityTone.CONSISTENT
         }
 
         val signals = mutableListOf<PuritySignal>()
         val sameIp = ipWhoIs?.let { it.ip == ipv4 }
-        val observabilityRisk = if (sameIp == false) 5.0 else 0.0
         signals += when (sameIp) {
-            true -> PuritySignal("多源出口一致性", "一致", "api.ipify.org 与 ipwho.is 返回同一 IPv4；不计风险", PurityTone.CONSISTENT)
-            false -> PuritySignal("多源出口一致性", "不一致", "api.ipify.org：$ipv4；ipwho.is：${ipWhoIs?.ip}；出口可观测性计 ${formatRisk(observabilityRisk)} / 5", PurityTone.NOTICE)
-            null -> PuritySignal("多源出口一致性", "未覆盖", "ipwho.is 暂不可用；不扣风险，但会降低证据覆盖度", PurityTone.NEUTRAL)
+            true -> PuritySignal("多源出口一致性", "一致", "api.ipify.org 与 ipwho.is 返回同一 IPv4；仅用于出口观测与覆盖度。", PurityTone.CONSISTENT)
+            false -> PuritySignal("多源出口一致性", "不一致", "api.ipify.org：$ipv4；ipwho.is：${ipWhoIs?.ip}；差异只提示当前观测路径，不推断历史滥用。", PurityTone.NEUTRAL)
+            null -> PuritySignal("多源出口一致性", "未覆盖", "ipwho.is 暂不可用；不会把未覆盖解释为低风险。", PurityTone.NEUTRAL)
         }
-
         if (ipApi != null && ipWhoIs != null && ipApi.countryCode.isNotBlank() && ipWhoIs.countryCode.isNotBlank()) {
             val sameCountry = ipApi.countryCode.equals(ipWhoIs.countryCode, ignoreCase = true)
-            signals += PuritySignal(
-                "多源地理一致性",
-                if (sameCountry) "一致" else "差异仅提示",
-                "ipapi.co：${ipApi.countryCode}；ipwho.is：${ipWhoIs.countryCode}；地理库差异不参与风险评分",
-                if (sameCountry) PurityTone.CONSISTENT else PurityTone.NEUTRAL
-            )
+            signals += PuritySignal("多源地理一致性", if (sameCountry) "一致" else "差异仅提示", "ipapi.co：${ipApi.countryCode}；ipwho.is：${ipWhoIs.countryCode}；地理差异不进入滥用风险。", if (sameCountry) PurityTone.CONSISTENT else PurityTone.NEUTRAL)
         } else {
-            signals += PuritySignal("多源地理一致性", "未覆盖", "至少一个公开地理源未返回国家代码；不因缺失扣风险", PurityTone.NEUTRAL)
+            signals += PuritySignal("多源地理一致性", "未覆盖", "至少一个公开地理源未返回国家代码。", PurityTone.NEUTRAL)
         }
-
         if (ipv6 != null && ipv6Geo != null && ipApi != null && ipv6Geo.countryCode.isNotBlank() && ipApi.countryCode.isNotBlank()) {
             val sameCountry = ipApi.countryCode.equals(ipv6Geo.countryCode, ignoreCase = true)
-            signals += PuritySignal(
-                "IPv4 / IPv6 位置",
-                if (sameCountry) "一致" else "差异仅提示",
-                "IPv4：${ipApi.countryCode}；IPv6：${ipv6Geo.countryCode}；双栈出口差异不参与风险评分",
-                if (sameCountry) PurityTone.CONSISTENT else PurityTone.NEUTRAL
-            )
+            signals += PuritySignal("IPv4 / IPv6 位置", if (sameCountry) "一致" else "差异仅提示", "IPv4：${ipApi.countryCode}；IPv6：${ipv6Geo.countryCode}；双栈差异不进入滥用风险。", if (sameCountry) PurityTone.CONSISTENT else PurityTone.NEUTRAL)
         } else {
-            signals += PuritySignal("IPv4 / IPv6 位置", "未覆盖", "未检测到双栈出口或 IPv6 地理属性；不因缺失扣风险", PurityTone.NEUTRAL)
+            signals += PuritySignal("IPv4 / IPv6 位置", "未覆盖", "未检测到双栈出口或 IPv6 地理属性。", PurityTone.NEUTRAL)
         }
 
-        val proxyReliability = proxyCheckReliability()
-        val torFromOfficial = torProjectResult == true
-        val torFromOtherSources = externalRisk?.tor == true || abuseRisk?.isTor == true || ipApiIsSecurity?.isTor == true
-        val proxySources = listOf(externalRisk?.proxy == true, ipApiIsSecurity?.isProxy == true).count { it }
-        val vpnSources = listOf(externalRisk?.vpn == true, ipApiIsSecurity?.isVpn == true).count { it }
-        val externalAnonymityCovered = externalRisk?.let { listOf(it.proxy, it.vpn, it.tor, it.anonymous).any { value -> value != null } } == true
-        val ipApiAnonymityCovered = ipApiIsSecurity?.let { listOf(it.isProxy, it.isVpn, it.isTor).any { value -> value != null } } == true
-        val anonymityCoverage = torProjectResult != null || externalAnonymityCovered || ipApiAnonymityCovered
-        val proxyRisk = when {
-            externalRisk?.proxy == true && ipApiIsSecurity?.isProxy == true -> maxOf(9.0, 10.0 * proxyReliability) + 2.0 * proxyReliability
-            externalRisk?.proxy == true -> 10.0 * proxyReliability
-            ipApiIsSecurity?.isProxy == true -> 9.0
-            else -> 0.0
+        // 直接风险只接受行为证据。代理、VPN、Tor、IDC、ASN 和地理信息绝不单独进入本层。
+        val proxyLastSeenDays = ageDays(proxyCheck?.detectionLastSeen.orEmpty())
+        val abuseLastSeenDays = ageDays(abuseRisk?.lastReportedAt.orEmpty())
+        val compromisedEvidence = if (proxyCheck?.compromised == true) evidence(0.95, 0.60, 1, 1.0, proxyLastSeenDays, 120.0) else 0.0
+        val attackHistoryEvidence = if ((proxyCheck?.attackEventCount ?: 0) > 0) evidence(0.80, 0.45, proxyCheck?.attackEventCount ?: 0, 3.0, proxyLastSeenDays, 45.0) else 0.0
+        val abuseSupport = maxOf(abuseRisk?.distinctUsers ?: 0, abuseRisk?.totalReports ?: 0)
+        val abuseScoreFactor = (abuseRisk?.confidenceScore ?: 0).coerceIn(0, 100) / 100.0
+        val abuseEvidence = if (abuseScoreFactor > 0.0) {
+            (0.60 * 0.75 * (0.25 + 0.75 * abuseScoreFactor) * volume(maxOf(1, abuseSupport), 5.0) * decay(abuseLastSeenDays, 60.0, 0.60)).coerceIn(0.0, 0.95)
+        } else 0.0
+        val abuserEvidence = if (ipApiIsSecurity?.isAbuser == true) evidence(0.60, 0.65, 1, 1.0, null, 60.0) else 0.0
+        val crawlerEvidence = combinedEvidence(listOf(
+            if (proxyCheck?.scraper == true) evidence(0.20, 0.55, 1, 1.0, proxyLastSeenDays, 14.0) else 0.0,
+            if (ipApiIsSecurity?.isCrawler == true) evidence(0.20, 0.60, 1, 1.0, null, 14.0) else 0.0
+        ))
+        val genericVendorEvidence = proxyCheck?.risk?.takeIf { it > 0 }?.let { risk ->
+            (0.25 * 0.35 * (risk.coerceIn(0, 100) / 100.0).pow(1.2) * decay(proxyLastSeenDays, 30.0, 0.60)).coerceIn(0.0, 0.95)
+        } ?: 0.0
+        val familyEvidence = listOf(
+            combinedEvidence(listOf(compromisedEvidence)),
+            combinedEvidence(listOf(attackHistoryEvidence)),
+            combinedEvidence(listOf(abuseEvidence, abuserEvidence)),
+            crawlerEvidence,
+            genericVendorEvidence
+        )
+        val directRisk = (85.0 * (1.0 - familyEvidence.fold(1.0) { product, value -> product * (1.0 - value.coerceIn(0.0, 0.95)) })).coerceIn(0.0, 85.0)
+        val behaviorCoverage = listOf(
+            proxyCheck?.let { it.risk != null || it.compromised != null || it.scraper != null || it.attackHistoryPresent } == true,
+            abuseRisk?.let { it.confidenceScore != null || it.totalReports != null || it.distinctUsers != null } == true,
+            ipApiIsSecurity?.let { it.isAbuser != null || it.isCrawler != null } == true
+        ).count { it }.toDouble() / 3.0
+        val behaviorFlags = buildList {
+            if (proxyCheck?.compromised == true) add("受损")
+            if ((proxyCheck?.attackEventCount ?: 0) > 0) add("攻击历史 ${proxyCheck?.attackEventCount}")
+            abuseRisk?.confidenceScore?.takeIf { it > 0 }?.let { add("AbuseIPDB $it") }
+            if (ipApiIsSecurity?.isAbuser == true) add("滥用")
+            if (crawlerEvidence > 0.0) add("爬虫")
+            proxyCheck?.risk?.takeIf { it > 0 }?.let { add("泛化风险 $it") }
         }
-        val vpnRisk = when {
-            externalRisk?.vpn == true && ipApiIsSecurity?.isVpn == true -> maxOf(7.0, 8.0 * proxyReliability) + 1.5 * proxyReliability
-            externalRisk?.vpn == true -> 8.0 * proxyReliability
-            ipApiIsSecurity?.isVpn == true -> 7.0
-            else -> 0.0
-        }
+        signals += PuritySignal(
+            "公开滥用风险（主分）",
+            if (behaviorCoverage == 0.0) "未覆盖" else if (behaviorFlags.isEmpty()) "未检出" else behaviorFlags.joinToString("、"),
+            if (behaviorCoverage == 0.0) "行为来源未覆盖；不把未知当作无风险。" else "按行为家族、来源质量、计数饱和和时间衰减计算：${formatRisk(directRisk)} / 85；网络属性不进入此分。",
+            if (behaviorCoverage == 0.0) PurityTone.NEUTRAL else if (directRisk > 0.0) PurityTone.NOTICE else PurityTone.CONSISTENT
+        )
+
+        // 透明度只表达当前网络属性，不参与主风险 R。
+        val maxMindTor = maxMindInsights?.isTorExitNode == true
+        val torSources = listOf(torProjectResult == true, proxyCheck?.tor == true, ipApiIsSecurity?.isTor == true, maxMindTor, ipHubRisk?.isTor == true).count { it }
+        val proxySources = listOf(proxyCheck?.proxy == true, ipApiIsSecurity?.isProxy == true, maxMindInsights?.isPublicProxy == true, ipHubRisk?.isProxy == true, ipHubRisk?.isResidentialProxy == true).count { it }
+        val vpnSources = listOf(proxyCheck?.vpn == true, ipApiIsSecurity?.isVpn == true, maxMindInsights?.isAnonymousVpn == true).count { it }
+        val relaySources = listOf(ipHubRisk?.isRelay == true).count { it }
         val transparencyRisk = when {
-            torFromOfficial -> 15.0
-            torFromOtherSources -> if (externalRisk?.tor == true) 13.0 + 1.5 * proxyReliability else 13.0
-            else -> maxOf(proxyRisk, vpnRisk)
-        }.coerceIn(0.0, 15.0)
-        val anonymityFlags = buildList {
-            if (torFromOfficial) add("Tor 官方确认")
-            else if (torFromOtherSources) add("Tor 标记")
-            if (!torFromOfficial && !torFromOtherSources && proxySources > 0) add("代理${if (proxySources >= 2) "（双源）" else ""}")
-            if (!torFromOfficial && !torFromOtherSources && proxySources == 0 && vpnSources > 0) add("VPN${if (vpnSources >= 2) "（双源）" else ""}")
-            if (externalRisk?.anonymous == true && isEmpty()) add("匿名标记（未单独计分）")
-        }
-        signals += PuritySignal(
-            "匿名化 / 透明度",
-            when {
-                !anonymityCoverage -> "未覆盖"
-                anonymityFlags.isEmpty() -> "未检出"
-                else -> anonymityFlags.joinToString("、")
-            },
-            when {
-                !anonymityCoverage -> "相关字段未覆盖；不扣风险，但会降低证据覆盖度"
-                transparencyRisk == 0.0 -> "已覆盖的来源未返回 Tor、代理或 VPN 标记"
-                torFromOfficial -> "Tor Project 是二元官方确认；透明度风险计 ${formatRisk(transparencyRisk)} / 15。该网络属性不等于历史滥用。"
-                else -> "ProxyCheck 置信度 ${externalRisk?.confidence?.let { "$it%" } ?: "未返回，按保守回退"}、最近检出 ${externalRisk?.detectionLastSeen?.ifBlank { "未返回" } ?: "未返回"} 已连续缩放；同类只取最强结论；透明度风险计 ${formatRisk(transparencyRisk)} / 15"
-            },
-            when {
-                !anonymityCoverage -> PurityTone.NEUTRAL
-                transparencyRisk > 0.0 -> PurityTone.NOTICE
-                else -> PurityTone.CONSISTENT
-            }
-        )
-
-        val abuseBaseRisk = abuseRisk?.confidenceScore?.let(::abuseScoreRisk) ?: 0.0
-        val abuseVolumeRisk = abuseRisk?.totalReports?.let(::reportVolumeRisk) ?: 0.0
-        val abuseFreshnessRisk = abuseRisk?.confidenceScore?.takeIf { it > 0 }?.let { 2.0 * freshnessFactor(abuseRisk.lastReportedAt, 0.60) } ?: 0.0
-        val abuseFromScore = minOf(36.0, abuseBaseRisk + abuseVolumeRisk + abuseFreshnessRisk)
-        val proxyCheckRisk = vendorRisk(externalRisk?.risk)
-        val compromised = externalRisk?.compromised == true
-        val abuser = ipApiIsSecurity?.isAbuser == true
-        val crawler = externalRisk?.scraper == true || ipApiIsSecurity?.isCrawler == true
-        val compromisedRisk = if (compromised) 12.0 + 8.0 * proxyReliability else 0.0
-        val abuserRisk = if (abuser) 16.0 else 0.0
-        val crawlerRisk = when {
-            externalRisk?.scraper == true -> 2.0 + 4.0 * proxyReliability
-            ipApiIsSecurity?.isCrawler == true -> 4.0
+            torProjectResult == true -> 100.0
+            torSources >= 2 -> 95.0
+            torSources == 1 -> 85.0
+            proxySources >= 2 -> 75.0
+            proxySources == 1 -> 60.0
+            vpnSources >= 2 -> 55.0
+            vpnSources == 1 -> 45.0
+            relaySources > 0 -> 35.0
             else -> 0.0
         }
-        val directAttackRisk = minOf(
-            28.0,
-            maxOf(compromisedRisk, abuserRisk, crawlerRisk) +
-                (if (compromised && abuser) 3.0 else 0.0) +
-                historyRisk(externalRisk?.attackEventCount ?: 0)
-        )
-        val primaryEvidence = maxOf(abuseFromScore / 36.0, proxyCheckRisk / 16.0, directAttackRisk / 28.0).coerceIn(0.0, 1.0)
-        val externalAttackStrength = maxOf(proxyCheckRisk / 16.0, compromisedRisk / 20.0)
-        val independentStrengths = listOf(
-            (abuseFromScore / 36.0).takeIf { abuseFromScore > 0.0 },
-            externalAttackStrength.takeIf { externalAttackStrength > 0.0 },
-            (abuserRisk / 16.0).takeIf { abuserRisk > 0.0 }
-        ).filterNotNull()
-        val corroborationStrength = if (independentStrengths.size >= 2) {
-            (0.08 + 0.12 * independentStrengths.average()).coerceAtMost(0.20)
-        } else {
-            0.0
-        }
-        val crawlerSupport = if (crawlerRisk > 0.0 && primaryEvidence > crawlerRisk / 28.0) minOf(0.08, crawlerRisk / 50.0) else 0.0
-        val abuseAndAttackRisk = (70.0 * (1.0 - (1.0 - primaryEvidence) * (1.0 - corroborationStrength) * (1.0 - crawlerSupport))).coerceIn(0.0, 70.0)
-        val externalBehaviorCovered = externalRisk?.let { it.risk != null || it.compromised != null || it.scraper != null || it.attackHistoryPresent } == true
-        val abuseBehaviorCovered = abuseRisk?.let { it.confidenceScore != null || it.totalReports != null } == true
-        val ipApiBehaviorCovered = ipApiIsSecurity?.let { it.isAbuser != null || it.isCrawler != null } == true
-        val behaviorCoverage = externalBehaviorCovered || abuseBehaviorCovered || ipApiBehaviorCovered
-        val abuseFlags = buildList {
-            abuseRisk?.confidenceScore?.let { add("AbuseIPDB $it") }
-            externalRisk?.risk?.let { add("ProxyCheck $it") }
-            if (compromised) add("受损")
-            if (abuser) add("滥用")
-            if (crawler) add("爬虫")
+        val anonymityCoverage = listOf(
+            torProjectResult != null,
+            proxyCheck?.let { listOf(it.proxy, it.vpn, it.tor, it.anonymous).any { value -> value != null } } == true,
+            ipApiIsSecurity?.let { listOf(it.isProxy, it.isVpn, it.isTor).any { value -> value != null } } == true,
+            maxMindInsights?.let { listOf(it.isAnonymous, it.isAnonymousVpn, it.isHostingProvider, it.isPublicProxy, it.isResidentialProxy, it.isTorExitNode).any { value -> value != null } } == true,
+            ipHubRisk?.let { it.block != null || listOf(it.isProxy, it.isTor, it.isHosting, it.isRelay, it.isResidentialProxy).any { value -> value != null } } == true
+        ).count { it }.toDouble() / 5.0
+        val anonymityFlags = buildList {
+            if (torSources > 0) add(if (torProjectResult == true) "Tor 官方确认" else "Tor 标记")
+            if (proxySources > 0) add("代理${if (proxySources >= 2) "（多源）" else ""}")
+            if (vpnSources > 0) add("VPN${if (vpnSources >= 2) "（多源）" else ""}")
+            if (relaySources > 0) add("中继")
+            if (ipHubRisk?.block == 2) add("IPHub 低置信可疑")
         }
         signals += PuritySignal(
-            "公开滥用风险",
-            when {
-                !behaviorCoverage -> "未覆盖"
-                abuseFlags.isEmpty() -> "未检出"
-                else -> abuseFlags.joinToString("、")
-            },
-            when {
-                !behaviorCoverage -> "滥用字段未覆盖；不扣风险，但会降低证据覆盖度"
-                abuseAndAttackRisk == 0.0 -> "已覆盖来源未返回可计入的滥用或攻击信号"
-                else -> "AbuseIPDB ${abuseRisk?.confidenceScore?.toString() ?: "未覆盖"}/100 → ${formatRisk(abuseFromScore)}；ProxyCheck ${externalRisk?.risk?.toString() ?: "未覆盖"}/100 → ${formatRisk(proxyCheckRisk)}；攻击历史 ${externalRisk?.attackEventCount ?: 0} 次；交叉支持 ${formatRisk(corroborationStrength * 100)}%；行为风险计 ${formatRisk(abuseAndAttackRisk)} / 70"
-            },
-            when {
-                !behaviorCoverage -> PurityTone.NEUTRAL
-                abuseAndAttackRisk > 0.0 -> PurityTone.NOTICE
-                else -> PurityTone.CONSISTENT
-            }
+            "网络透明度（独立）",
+            if (anonymityCoverage == 0.0) "未覆盖" else if (anonymityFlags.isEmpty()) "未检出" else anonymityFlags.joinToString("、"),
+            if (anonymityCoverage == 0.0) "匿名化字段未覆盖；不影响主分。" else "透明度 ${formatRisk(transparencyRisk)} / 100；Tor、代理、VPN 和中继仅反映网络路径属性，不证明历史滥用。",
+            if (anonymityCoverage == 0.0) PurityTone.NEUTRAL else if (transparencyRisk > 0.0) PurityTone.NOTICE else PurityTone.CONSISTENT
         )
 
-        if (apiKeys.abuseIpDbKey.isBlank()) {
-            signals += PuritySignal("AbuseIPDB 授权来源", "未配置", "填写本机 Key 后才查询置信分、报告数、最近报告和 Tor 字段；不扣风险，但会降低覆盖度", PurityTone.NEUTRAL)
-        } else if (abuseRisk == null) {
-            signals += PuritySignal("AbuseIPDB 授权来源", "未覆盖", "授权接口未返回可用结果；不扣风险，但会降低覆盖度", PurityTone.NEUTRAL)
-        } else {
-            val scoreText = abuseRisk.confidenceScore?.let { "$it / 100" } ?: "关键字段未覆盖"
-            signals += PuritySignal(
-                "AbuseIPDB 授权来源",
-                scoreText,
-                "报告：${abuseRisk.totalReports?.toString() ?: "未返回"}；类型：${abuseRisk.usageType.ifBlank { "未返回" }}；最近报告：${abuseRisk.lastReportedAt.ifBlank { "未返回" }}；同类供应商分数不线性叠加",
-                if (abuseFromScore > 0.0 || abuseRisk.isTor == true) PurityTone.NOTICE else PurityTone.CONSISTENT
-            )
-        }
-
-        val ipApiSecurityCovered = ipApiIsSecurity?.let { listOf(it.isDatacenter, it.isProxy, it.isVpn, it.isTor, it.isAbuser, it.isCrawler).any { value -> value != null } } == true
-        if (apiKeys.ipApiKey.isBlank()) {
-            signals += PuritySignal("ipapi.is 授权来源", "未配置", "填写本机 Key 后才查询 VPN、代理、Tor、托管、滥用与爬虫字段；不扣风险，但会降低覆盖度", PurityTone.NEUTRAL)
-        } else if (ipApiIsSecurity == null || !ipApiSecurityCovered) {
-            signals += PuritySignal("ipapi.is 授权来源", "字段未覆盖", "授权接口未返回完整安全字段；不把字段缺失解释为未检出", PurityTone.NEUTRAL)
-        } else {
-            val flags = buildList {
-                if (ipApiIsSecurity.isDatacenter == true) add("数据中心")
-                if (ipApiIsSecurity.isProxy == true) add("代理")
-                if (ipApiIsSecurity.isVpn == true) add("VPN")
-                if (ipApiIsSecurity.isCrawler == true) add("爬虫")
-                if (ipApiIsSecurity.isTor == true) add("Tor")
-                if (ipApiIsSecurity.isAbuser == true) add("滥用")
-            }
-            val identity = listOf(ipApiIsSecurity.companyName, ipApiIsSecurity.asnOrganization)
-                .filter { it.isNotBlank() }.distinct().joinToString(" · ")
-            signals += PuritySignal(
-                "ipapi.is 授权来源",
-                if (flags.isEmpty()) "未检出" else flags.joinToString("、"),
-                "${if (identity.isBlank()) "未返回公司 / ASN" else identity}${if (ipApiIsSecurity.hasManagedEgress) "；受管理出口：${ipApiIsSecurity.egressSummary.ifBlank { "是" }}（仅说明）" else ""}；同类信号在风险桶内去重",
-                if (flags.isEmpty()) PurityTone.CONSISTENT else PurityTone.NOTICE
-            )
-        }
-
-        val metadata = ipApi ?: ipWhoIs
-        val heuristicHosting = metadata?.let { isLikelyHostedNetwork(it.asn, it.organization) } == true
-        val proxyCheckHostingRisk = if (externalRisk?.hosting == true) 2.0 + 2.0 * proxyReliability else 0.0
-        val ipApiHostingRisk = if (ipApiIsSecurity?.isDatacenter == true) 4.5 else 0.0
-        val hostingCorroboration = if (proxyCheckHostingRisk > 0.0 && ipApiHostingRisk > 0.0) 1.5 + 2.0 * proxyReliability else 0.0
-        val contextRisk = minOf(
-            10.0,
-            maxOf(if (heuristicHosting) 2.0 else 0.0, proxyCheckHostingRisk, ipApiHostingRisk) + hostingCorroboration
-        )
-        val externalContextCovered = externalRisk?.hosting != null
-        val ipApiContextCovered = ipApiIsSecurity?.isDatacenter != null
-        val contextCoverage = metadata != null || externalContextCovered || ipApiContextCovered
         val contextFlags = buildList {
-            if (proxyCheckHostingRisk > 0.0 && ipApiHostingRisk > 0.0) add("双源托管 / 数据中心")
-            else if (proxyCheckHostingRisk > 0.0 || ipApiHostingRisk > 0.0) add("直接托管 / 数据中心")
-            else if (heuristicHosting) add("ASN / 组织启发式")
-            if (ipApiIsSecurity?.hasManagedEgress == true) add("受管理出口（仅说明）")
+            if (proxyCheck?.hosting == true) add("ProxyCheck 托管")
+            if (ipApiIsSecurity?.isDatacenter == true) add("ipapi.is 数据中心")
+            if (maxMindInsights?.isHostingProvider == true) add("MaxMind 托管")
+            if (ipHubRisk?.isHosting == true) add("IPHub 托管")
+            maxMindInsights?.network?.takeIf { it.isNotBlank() }?.let { add("CIDR $it") }
+            ipHubRisk?.blockReason?.takeIf { it.isNotBlank() }?.let { add("IPHub：$it") }
         }
+        val contextCoverage = listOf(
+            ipApi != null || ipWhoIs != null,
+            proxyCheck?.hosting != null,
+            ipApiIsSecurity?.isDatacenter != null,
+            maxMindInsights != null,
+            ipHubRisk?.block != null
+        ).count { it }.toDouble() / 5.0
         signals += PuritySignal(
-            "网络上下文",
-            when {
-                !contextCoverage -> "未覆盖"
-                contextFlags.isEmpty() -> "未标记"
-                else -> contextFlags.joinToString("、")
-            },
-            when {
-                !contextCoverage -> "ASN、组织或托管字段未覆盖；不扣风险，但会降低证据覆盖度"
-                contextRisk == 0.0 -> "已覆盖来源未把当前出口标为托管或数据中心"
-                else -> "云 / IDC / 托管是网络背景而非恶意证据；上下文风险计 ${formatRisk(contextRisk)} / 10"
-            },
-            when {
-                !contextCoverage -> PurityTone.NEUTRAL
-                contextRisk > 0.0 -> PurityTone.NOTICE
-                else -> PurityTone.CONSISTENT
-            }
+            "网络上下文（不计主分）",
+            if (contextCoverage == 0.0) "未覆盖" else if (contextFlags.isEmpty()) "未标记" else contextFlags.take(3).joinToString("、"),
+            if (contextCoverage == 0.0) "ASN、CIDR、托管和数据中心字段未覆盖。" else "IDC、云、托管、ASN、CIDR 和 ISP 仅作网络上下文，不单独判定历史滥用。",
+            if (contextCoverage == 0.0) PurityTone.NEUTRAL else if (contextFlags.isNotEmpty()) PurityTone.NEUTRAL else PurityTone.CONSISTENT
         )
+
+        fun addSourceSignal(title: String, configured: Boolean, available: Boolean, detail: String) {
+            val (state, tone) = sourceState(configured, available, title)
+            signals += PuritySignal(title, state, detail, tone)
+        }
+        addSourceSignal(
+            "AbuseIPDB 授权来源",
+            apiKeys.abuseIpDbKey.isNotBlank(), abuseRisk != null,
+            abuseRisk?.let { "置信分：${it.confidenceScore ?: "未返回"}；报告：${it.totalReports ?: "未返回"}；独立报告者：${it.distinctUsers ?: "未返回"}；最近报告：${it.lastReportedAt.ifBlank { "未返回" }}。" }
+                ?: "预置 APIv2 Check；仅在填写本地 Key 后查询。"
+        )
+        addSourceSignal(
+            "ipapi.is 授权来源",
+            apiKeys.ipApiKey.isNotBlank(), ipApiIsSecurity != null,
+            ipApiIsSecurity?.let { "代理：${it.isProxy ?: "未返回"}；VPN：${it.isVpn ?: "未返回"}；Tor：${it.isTor ?: "未返回"}；滥用：${it.isAbuser ?: "未返回"}；爬虫：${it.isCrawler ?: "未返回"}。" }
+                ?: "预置官方 JSON POST；仅在填写本地 Key 后查询。"
+        )
+        addSourceSignal(
+            "MaxMind GeoIP Insights",
+            apiKeys.maxMindAccountId.isNotBlank() || apiKeys.maxMindLicenseKey.isNotBlank(), maxMindInsights != null,
+            maxMindInsights?.let { "网络：${it.network.ifBlank { "未返回" }}；ASN：${it.asn.ifBlank { "未返回" }}；匿名化置信：${it.anonymizerConfidence?.toString() ?: "未返回"}。仅进入透明度/上下文。" }
+                ?: "预置 HTTPS Basic Auth Insights；需同时填写 Account ID 与 License Key。"
+        )
+        addSourceSignal(
+            "IPHub v2.2",
+            apiKeys.ipHubKey.isNotBlank(), ipHubRisk != null,
+            ipHubRisk?.let { "block：${it.block?.toString() ?: "未返回"}；原因：${it.blockReason.ifBlank { "未返回" }}；托管/代理/Tor 仅进入透明度和上下文；block=2 只提示低置信。" }
+                ?: "预置 X-Key 与 Accept-Version: 2.2；仅在填写本地 Key 后查询。"
+        )
+        signals += PuritySignal("网页专属检测", "外部入口", "BrowserLeaks 适合浏览器内 WebRTC、JavaScript、Canvas/WebGL、TLS 与 DNS 自检；原生 Android 不伪造这些结果。", PurityTone.NEUTRAL)
+        signals += PuritySignal("EdgeOne / NSTool", "未纳入 API", "myip.edgeone.ai 本次无法解析；NSTool 未公开可审计风险 API。两者均不作为默认请求或评分来源。", PurityTone.NEUTRAL)
 
         val privacy = inspectPrivacy(context)
-        signals += PuritySignal(
-            "Android 网络状态",
-            if (privacy.vpnActive) "VPN 已连接" else "未检测到 VPN",
-            "Private DNS：${privacy.privateDnsMode}${if (privacy.dnsServers.isNotEmpty()) "；DNS：${privacy.dnsServers.take(2).joinToString("、")}" else ""}；系统状态只展示，不参与历史滥用评分",
-            PurityTone.NEUTRAL
-        )
+        signals += PuritySignal("Android 网络状态", if (privacy.vpnActive) "VPN 已连接" else "未检测到 VPN", "Private DNS：${privacy.privateDnsMode}${if (privacy.dnsServers.isNotEmpty()) "；DNS：${privacy.dnsServers.take(2).joinToString("、")}" else ""}；只展示，不参与主风险。", PurityTone.NEUTRAL)
 
-        val coverageItems = listOf(
-            "直接行为" to (70.0 to behaviorCoverage),
-            "匿名化" to (15.0 to anonymityCoverage),
-            "网络上下文" to (10.0 to contextCoverage),
-            "出口观测" to (5.0 to (sameIp != null))
-        )
-        val coverage = coverageItems.sumOf { (_, item) -> if (item.second) item.first else 0.0 }.coerceIn(0.0, 100.0)
+        val coverage = (55.0 * behaviorCoverage + 25.0 * anonymityCoverage + 15.0 * contextCoverage + if (sameIp != null) 5.0 else 0.0).coerceIn(0.0, 100.0)
         val coverageLabel = when {
-            coverage >= 80.0 -> "证据覆盖较完整"
-            coverage >= 50.0 -> "部分覆盖"
-            else -> "覆盖不足"
+            coverage >= 85.0 -> "证据覆盖较完整"
+            coverage >= 60.0 -> "部分覆盖"
+            else -> "证据不足"
         }
-        val missingCoverage = coverageItems.filter { (_, item) -> !item.second }.joinToString("、") { it.first }
-        val coverageDetail = if (missingCoverage.isBlank()) {
-            "直接行为、匿名化、网络上下文和出口观测四类关键证据均已覆盖。"
-        } else {
-            "未覆盖：$missingCoverage。未覆盖不会扣风险，也不应被解释为无风险。"
-        }
-        signals += PuritySignal(
-            "证据覆盖度",
-            "${formatRisk(coverage)} / 100 · $coverageLabel",
-            coverageDetail,
-            when {
-                coverage >= 80.0 -> PurityTone.CONSISTENT
-                coverage >= 50.0 -> PurityTone.NEUTRAL
-                else -> PurityTone.NOTICE
-            }
-        )
+        val coverageDetail = "公开滥用 ${formatRisk(behaviorCoverage * 100)}% · 匿名化 ${formatRisk(anonymityCoverage * 100)}% · 网络上下文 ${formatRisk(contextCoverage * 100)}% · 出口观测 ${if (sameIp != null) "100.0" else "0.0"}%。未覆盖不等于无风险。"
+        signals += PuritySignal("证据覆盖度", "${formatRisk(coverage)} / 100 · $coverageLabel", coverageDetail, if (coverage >= 85.0) PurityTone.CONSISTENT else PurityTone.NEUTRAL)
 
-        val buckets = listOf(
-            PurityRiskBucket("直接恶意与滥用", abuseAndAttackRisk, 70.0, "近期、可溯源的滥用与攻击信号主导；同类来源去重并使用有限交叉支持"),
-            PurityRiskBucket("匿名化 / 透明度", transparencyRisk, 15.0, "Tor、代理和 VPN 是网络属性，单列展示，不等同于历史恶意"),
-            PurityRiskBucket("网络上下文", contextRisk, 10.0, "ASN、云/IDC、托管和网段背景仅作低上限先验"),
-            PurityRiskBucket("出口可观测性", observabilityRisk, 5.0, "只反映同次出口地址冲突，不推断历史行为")
-        )
-        val totalRisk = buckets.sumOf { it.risk }.coerceIn(0.0, 100.0)
-        val score = 100.0 - totalRisk
+        val score = 100.0 - directRisk
         val label = when {
-            totalRisk <= 10.0 && coverage >= 50.0 -> "低风险信号"
-            totalRisk <= 30.0 -> "轻度提示"
-            totalRisk <= 60.0 -> "需复核"
+            coverage < 60.0 -> "证据不足"
+            directRisk <= 10.0 -> "低风险信号"
+            directRisk <= 30.0 -> "轻度提示"
+            directRisk <= 60.0 -> "需复核"
             else -> "高风险提示"
         }
         val summary = when {
-            coverage < 50.0 -> "关键证据覆盖不足；当前分数只反映已覆盖来源，不应据此判断出口安全性。"
-            totalRisk <= 10.0 -> "本次已覆盖的公开来源中未见明显风险信号；这不是安全保证。"
-            totalRisk <= 30.0 -> "发现有限、可解释的公开风险或透明度提示，建议结合网络配置复检。"
-            totalRisk <= 60.0 -> "发现较强的公开风险或匿名化/出口观测提示，建议核对网络路径与风险明细。"
-            else -> "多个高权重公开风险信号同时命中；仅作网络出口风险提示，不能单独推断个人或账号行为。"
+            coverage < 60.0 -> "关键证据覆盖不足；未发现不等于无风险，主分只反映本次已覆盖来源。"
+            directRisk <= 10.0 -> "已覆盖来源中未见明显公开滥用信号；这不是安全保证。"
+            directRisk <= 30.0 -> "发现有限且可解释的公开滥用信号，建议查看事件来源、时间与网络配置。"
+            directRisk <= 60.0 -> "发现较强的公开滥用信号，建议核对事件明细并采用低摩擦复核措施。"
+            else -> "多个高权重公开滥用证据命中；仅作网络出口风险提示，不推断个人或账号行为。"
         }
+        val buckets = listOf(
+            PurityRiskBucket("公开滥用风险（主分）", "${formatRisk(directRisk)} / 85", "按行为家族、来源质量、饱和计数与时效组合；网络属性不计入。", if (behaviorCoverage == 0.0) PurityTone.NEUTRAL else if (directRisk > 0.0) PurityTone.NOTICE else PurityTone.CONSISTENT),
+            PurityRiskBucket("网络透明度（独立）", "${formatRisk(transparencyRisk)} / 100", "Tor、代理、VPN 和中继是网络路径属性，独立显示且不污染主分。", if (anonymityCoverage == 0.0) PurityTone.NEUTRAL else if (transparencyRisk > 0.0) PurityTone.NOTICE else PurityTone.CONSISTENT),
+            PurityRiskBucket("网络上下文", if (contextFlags.isEmpty()) "未标记" else "${contextFlags.size} 项", "IDC、托管、ASN、CIDR 和 ISP 仅供解释，不单独判定历史恶意。", if (contextCoverage == 0.0) PurityTone.NEUTRAL else if (contextFlags.isEmpty()) PurityTone.CONSISTENT else PurityTone.NEUTRAL),
+            PurityRiskBucket("证据覆盖度", "${formatRisk(coverage)} / 100", coverageDetail, if (coverage >= 85.0) PurityTone.CONSISTENT else PurityTone.NEUTRAL)
+        )
         return PurityReport(
             score = score,
-            risk = totalRisk,
-            abuseRisk = abuseAndAttackRisk,
+            risk = directRisk,
+            abuseRisk = directRisk,
             transparencyRisk = transparencyRisk,
-            contextRisk = contextRisk,
-            observabilityRisk = observabilityRisk,
             coverage = coverage,
             coverageLabel = coverageLabel,
             coverageDetail = coverageDetail,
@@ -2069,6 +2029,7 @@ private object NetworkRepository {
         return AbuseIpDbRisk(
             confidenceScore = data.intOrNull("abuseConfidenceScore")?.coerceIn(0, 100),
             totalReports = data.intOrNull("totalReports")?.coerceAtLeast(0),
+            distinctUsers = data.intOrNull("numDistinctUsers")?.coerceAtLeast(0),
             isTor = data.booleanOrNull("isTor"),
             usageType = data.stringOrBlank("usageType"),
             lastReportedAt = data.stringOrBlank("lastReportedAt")
@@ -2145,6 +2106,57 @@ private object NetworkRepository {
             attackEventCount = attackEventCount,
             attackHistoryPresent = attackHistory != null,
             attackSummary = attacks.joinToString("；")
+        )
+    }
+
+    private fun probeMaxMindInsights(ip: String, accountId: String, licenseKey: String): MaxMindInsights {
+        val token = Base64.encodeToString("$accountId:$licenseKey".toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+        val encodedIp = URLEncoder.encode(ip, Charsets.UTF_8.name()).replace("+", "%20")
+        val json = JSONObject(
+            getText(
+                "https://geoip.maxmind.com/geoip/v2.1/insights/$encodedIp",
+                mapOf("Authorization" to "Basic $token")
+            )
+        )
+        val anonymizer = json.optJSONObject("anonymizer")
+        val traits = json.optJSONObject("traits")
+        val asnValue = traits?.opt("autonomous_system_number")?.toString().orEmpty()
+        return MaxMindInsights(
+            isAnonymous = anonymizer?.booleanOrNull("is_anonymous"),
+            isAnonymousVpn = anonymizer?.booleanOrNull("is_anonymous_vpn"),
+            isHostingProvider = anonymizer?.booleanOrNull("is_hosting_provider"),
+            isPublicProxy = anonymizer?.booleanOrNull("is_public_proxy"),
+            isResidentialProxy = anonymizer?.booleanOrNull("is_residential_proxy"),
+            isTorExitNode = anonymizer?.booleanOrNull("is_tor_exit_node"),
+            anonymizerConfidence = anonymizer?.intOrNull("confidence")?.coerceIn(0, 100),
+            network = traits?.stringOrBlank("network").orEmpty(),
+            asn = asnValue.takeIf { it.isNotBlank() }?.let { if (it.startsWith("AS", ignoreCase = true)) it else "AS$it" }.orEmpty(),
+            organization = traits?.stringOrBlank("autonomous_system_organization").orEmpty().ifBlank { traits?.stringOrBlank("organization").orEmpty() },
+            isp = traits?.stringOrBlank("isp").orEmpty(),
+            connectionType = traits?.stringOrBlank("connection_type").orEmpty()
+        )
+    }
+
+    private fun probeIpHub(ip: String, apiKey: String): IpHubRisk {
+        val encodedIp = URLEncoder.encode(ip, Charsets.UTF_8.name()).replace("+", "%20")
+        val json = JSONObject(
+            getText(
+                "https://v2.api.iphub.info/ip/$encodedIp",
+                mapOf("X-Key" to apiKey, "Accept-Version" to "2.2")
+            )
+        )
+        val proxyType = json.optJSONObject("proxyType")
+        return IpHubRisk(
+            block = json.intOrNull("block")?.takeIf { it in 0..2 },
+            blockReason = json.stringOrBlank("blockReason"),
+            isProxy = proxyType?.booleanOrNull("proxy"),
+            isTor = proxyType?.booleanOrNull("tor"),
+            isHosting = proxyType?.booleanOrNull("hosting"),
+            isRelay = proxyType?.booleanOrNull("relay"),
+            isResidentialProxy = proxyType?.booleanOrNull("residentialProxy"),
+            asn = json.opt("asn")?.toString().orEmpty().takeIf { it.isNotBlank() }?.let { if (it.startsWith("AS", ignoreCase = true)) it else "AS$it" }.orEmpty(),
+            isp = json.stringOrBlank("isp"),
+            countryCode = json.stringOrBlank("countryCode")
         )
     }
 

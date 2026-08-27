@@ -22,7 +22,7 @@
 | --- | --- |
 | 公网 IP 信息 | 查询 IPv4、可用时的 IPv6、国家 / 地区 / 城市、时区、ISP 与 ASN，并支持复制 IPv4。 |
 | 网络连通性 | 检测 Google、GitHub、Cloudflare、ChatGPT、YouTube 与 Wikipedia 的可达性和延迟。 |
-| 增强纯净度诊断 | 归纳公开 Proxy / VPN / Tor / 托管 / 滥用与攻击信号，以分桶、去重、上限和连续映射方式给出可解释的出口风险指数。 |
+| 增强纯净度诊断 | 以公开滥用行为证据生成连续主分，并把 Proxy / VPN / Tor / 中继、托管 / IDC / ASN 和证据覆盖度独立展示；每一分均可回放来源、字段与时效。 |
 | Android 网络隐私 | 展示 Android VPN 状态、Private DNS 模式与系统 DNS 服务器。 |
 | 原生 DNS 与 Whois | 使用 Android 系统解析器进行 DNS 查询，并通过公开注册表查询域名或 IP 的 Whois 信息。 |
 | 原生服务状态 | 从当前网络探测常用 HTTPS 服务的 443 端口连通性和连接耗时。 |
@@ -38,25 +38,27 @@ MyIP 与 IPCheck.ing 包含一些典型的浏览器能力，例如 WebRTC 候选
 
 ## 透明纯净度诊断
 
-纯净度诊断现为 MyIPCheck 独立设计的**公开网络出口风险信号指数**。它不是任何第三方的原始评分，也不是个人、账号、支付或交易的欺诈概率。模型将结果拆为四个有上限的层：**直接恶意与滥用、匿名化/透明度、网络上下文和出口可观测性**；同一风险语义跨来源只取最强结论或有限交叉支持，避免线性重复扣分。
+纯净度诊断现为 MyIPCheck 独立设计的**公开网络出口风险信号指数**。它不是任何第三方的原始评分，也不是个人、账号、支付或交易的欺诈概率。v3.1 将输出拆为：**公开滥用风险主分、网络透明度、网络上下文和证据覆盖度**。主分只接受可用的公开行为证据；Tor、代理、VPN、中继、IDC、托管、ASN、CIDR、地理与出口差异均被单列解释，绝不凭网络属性推断历史恶意。
 
-主分越高只表示已覆盖来源中识别到的公开风险信号较少。APP 会同时显示**证据覆盖度**：接口未覆盖、Key 未配置、超时、字段缺失或字段格式错误均不扣风险，但会降低覆盖度，并明确显示为“未覆盖”而不是“未检出”。AbuseIPDB 的原始分、报告数与时效以及 ProxyCheck 的风险、置信度、最近检出时间和攻击历史继续使用连续公式；Tor、代理、VPN 与托管网络被单列为透明度或背景信息，不等同于历史恶意。
+主分中的每一分均由来源、字段、来源质量先验、计数饱和、事件时间衰减和非线性家族组合计算。APP 同时显示**证据覆盖度**：接口未覆盖、Key 未配置、429、超时、字段缺失或格式错误均不扣风险，但会降低覆盖度，并明确显示为“未覆盖”而不是“未检出”。未经外部、时间外真实标签校准，任何分数都不得解释为概率。
 
 详细的公式、上限、去重方法、覆盖度定义、示例情景和引用见：
 
-- [`purity_scoring_model_v3.md`](purity_scoring_model_v3.md)
-- [`purity_module_spec.md`](purity_module_spec.md)
-- [`purity_data_sources_research.md`](purity_data_sources_research.md)
-- [`科学IP纯净度评分规则建议.md`](科学IP纯净度评分规则建议.md)
+- [`purity_scoring_model_v3_1.md`](purity_scoring_model_v3_1.md)
+- [`docs_maxmind_iphub_integration.md`](docs_maxmind_iphub_integration.md)
+- [`docs_external_sites_assessment.md`](docs_external_sites_assessment.md)
+- [`IP纯净度评分规则核验与v3_1建议.md`](IP纯净度评分规则核验与v3_1建议.md)
 
 ### 授权数据源 Key
 
-如果拥有 AbuseIPDB 或 ipapi.is 的 API Key，可点击 APP 顶部**地球图标右侧的钥匙图标**进入本地配置。Key 与自定义 HTTPS 请求地址均使用 Android Keystore 的 AES-GCM 密钥加密后存储在当前设备；系统云备份与设备迁移已禁用。
+如果拥有 AbuseIPDB、ipapi.is、MaxMind GeoIP Insights 或 IPHub 的凭据，可点击 APP 顶部**地球图标右侧的钥匙图标**进入本地配置。每个凭据输入框旁均有小眼睛，可在本机即时显示或隐藏；所有 Key、MaxMind Account ID 和自定义 HTTPS 请求地址均使用 Android Keystore 的 AES-GCM 密钥加密后存储在当前设备；系统云备份与设备迁移已禁用。
 
 | 配置项 | 当前行为 |
 | --- | --- |
-| AbuseIPDB API Key | 保存后用于查询 AbuseIPDB APIv2 Check，并补充公开滥用报告证据。 |
-| ipapi.is API Key | 保存后通过官方 JSON POST 查询安全属性，Key 不出现在 URL 中。 |
+| AbuseIPDB API Key | 保存后用于查询 AbuseIPDB APIv2 Check；置信分、报告量、独立报告者与最近报告构成公开滥用证据候选。 |
+| ipapi.is API Key | 保存后通过官方 JSON POST 查询安全属性；`is_abuser` 与 `is_crawler` 可进入相应行为家族，匿名化与数据中心只单列。 |
+| MaxMind Account ID + License Key | 成对保存后以 HTTPS Basic Auth 调用 GeoIP Insights；匿名化与网络字段只进入透明度、上下文和覆盖度。 |
+| IPHub API Key | 保存后以 `X-Key` 调用 v2.2；`block==1` 和 `proxyType` 只作为透明度/上下文，`block==2` 仅提示低置信。 |
 | 自定义 HTTPS 地址与 Key | 必须成对保存；当前版本仅本地加密保存，不会自动请求、不发送当前 IP，也不参与评分。 |
 
 具体操作与隐私边界见 [`API-Key-配置指南.md`](API-Key-配置指南.md)。
@@ -93,7 +95,7 @@ cd android
 
 ## 网络与隐私
 
-应用使用 `api.ipify.org` 获取公网 IP，并使用 `ipapi.co` 与 `ipwho.is` 查询 IP 地理属性；增强纯净度诊断按需访问 `proxycheck.io` 与 Tor Project。只有用户自行配置相应 Key 后，才会调用 AbuseIPDB APIv2 Check 与 ipapi.is 官方 JSON POST 端点。自定义 HTTPS 地址与 Key 当前不会被发送给任何端点。
+应用使用 `api.ipify.org` 获取公网 IP，并使用 `ipapi.co` 与 `ipwho.is` 查询 IP 地理属性；增强诊断按需访问 `proxycheck.io` 与 Tor Project。只有用户自行配置对应 Key 后，才会调用 AbuseIPDB APIv2 Check、ipapi.is 官方 JSON POST、MaxMind GeoIP Insights 与 IPHub v2.2。`myip.edgeone.ai` 在本次核验中无法解析，NSTool 未公开可审计 IP API，二者均不会被自动请求。BrowserLeaks 仅作为浏览器专属的外部自检入口。自定义 HTTPS 地址与 Key 当前不会被发送给任何端点。
 
 应用不会读取账号、Cookie、浏览记录、设备指纹、通讯录或位置权限；也不会在本地持久化保存 IP 历史或检测报告。网络服务与公开注册表仍可能按照各自隐私政策处理请求日志，使用前请自行确认服务条款、账户配额与隐私政策。
 
