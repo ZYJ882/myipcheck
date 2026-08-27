@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -57,6 +58,7 @@ import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Security
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.SettingsEthernet
 import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material.icons.outlined.Storage
@@ -68,6 +70,8 @@ import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
@@ -76,6 +80,8 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -84,12 +90,14 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -133,44 +141,96 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-private val AppBackground = Color(0xFFF4F6F8)
-private val CardSurface = Color(0xFFFFFFFF)
-private val Ink = Color(0xFF15232D)
-private val MutedInk = Color(0xFF66757F)
-private val Blue = Color(0xFF1E88E5)
-private val Green = Color(0xFF16A36A)
-private val Amber = Color(0xFFF2A51A)
-private val Red = Color(0xFFE05252)
-private val SoftBlue = Color(0xFFEAF4FF)
-private val SoftGreen = Color(0xFFE8F8F0)
-private val SoftAmber = Color(0xFFFFF5DC)
-private val Border = Color(0xFFE3E9ED)
+private enum class ThemePreference { SYSTEM, LIGHT, DARK }
+
+private data class AppPalette(
+    val background: Color,
+    val surface: Color,
+    val ink: Color,
+    val mutedInk: Color,
+    val blue: Color,
+    val green: Color,
+    val amber: Color,
+    val red: Color,
+    val softBlue: Color,
+    val softGreen: Color,
+    val softAmber: Color,
+    val border: Color
+)
+
+private val LightPalette = AppPalette(
+    background = Color(0xFFF4F6F8), surface = Color(0xFFFFFFFF), ink = Color(0xFF15232D), mutedInk = Color(0xFF66757F),
+    blue = Color(0xFF1E88E5), green = Color(0xFF16A36A), amber = Color(0xFFF2A51A), red = Color(0xFFE05252),
+    softBlue = Color(0xFFEAF4FF), softGreen = Color(0xFFE8F8F0), softAmber = Color(0xFFFFF5DC), border = Color(0xFFE3E9ED)
+)
+
+private val DarkPalette = AppPalette(
+    background = Color(0xFF101417), surface = Color(0xFF192227), ink = Color(0xFFE7EEF2), mutedInk = Color(0xFFB5C3CB),
+    blue = Color(0xFF8CC7FF), green = Color(0xFF84DBAE), amber = Color(0xFFFFD16E), red = Color(0xFFFFA3A3),
+    softBlue = Color(0xFF16354B), softGreen = Color(0xFF173C2C), softAmber = Color(0xFF473818), border = Color(0xFF34434C)
+)
+
+private val LocalAppPalette = staticCompositionLocalOf { LightPalette }
+
+private val AppBackground: Color @Composable get() = LocalAppPalette.current.background
+private val CardSurface: Color @Composable get() = LocalAppPalette.current.surface
+private val Ink: Color @Composable get() = LocalAppPalette.current.ink
+private val MutedInk: Color @Composable get() = LocalAppPalette.current.mutedInk
+private val Blue: Color @Composable get() = LocalAppPalette.current.blue
+private val Green: Color @Composable get() = LocalAppPalette.current.green
+private val Amber: Color @Composable get() = LocalAppPalette.current.amber
+private val Red: Color @Composable get() = LocalAppPalette.current.red
+private val SoftBlue: Color @Composable get() = LocalAppPalette.current.softBlue
+private val SoftGreen: Color @Composable get() = LocalAppPalette.current.softGreen
+private val SoftAmber: Color @Composable get() = LocalAppPalette.current.softAmber
+private val Border: Color @Composable get() = LocalAppPalette.current.border
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent {
-            NetScopeTheme {
-                NetScopeApp()
-            }
-        }
+        setContent { NetScopeRoot() }
     }
 }
 
 @Composable
-private fun NetScopeTheme(content: @Composable () -> Unit) {
-    MaterialTheme(
-        colorScheme = MaterialTheme.colorScheme.copy(
-            primary = Blue,
-            secondary = Green,
-            surface = CardSurface,
-            background = AppBackground,
-            onBackground = Ink,
-            onSurface = Ink,
-            outline = Border
-        ),
-        content = content
-    )
+private fun NetScopeRoot() {
+    val context = LocalContext.current
+    var themePreference by remember {
+        mutableStateOf(runCatching { SecureApiKeyStore.loadThemePreference(context) }.getOrDefault(ThemePreference.SYSTEM))
+    }
+    NetScopeTheme(themePreference) {
+        NetScopeApp(
+            themePreference = themePreference,
+            onThemePreferenceChange = { selected ->
+                runCatching { SecureApiKeyStore.saveThemePreference(context, selected) }
+                    .onSuccess { themePreference = selected }
+            }
+        )
+    }
+}
+
+@Composable
+private fun NetScopeTheme(themePreference: ThemePreference, content: @Composable () -> Unit) {
+    val useDarkPalette = when (themePreference) {
+        ThemePreference.SYSTEM -> isSystemInDarkTheme()
+        ThemePreference.LIGHT -> false
+        ThemePreference.DARK -> true
+    }
+    val palette = if (useDarkPalette) DarkPalette else LightPalette
+    val colorScheme = if (useDarkPalette) {
+        darkColorScheme(
+            primary = palette.blue, secondary = palette.green, surface = palette.surface, background = palette.background,
+            onBackground = palette.ink, onSurface = palette.ink, outline = palette.border
+        )
+    } else {
+        lightColorScheme(
+            primary = palette.blue, secondary = palette.green, surface = palette.surface, background = palette.background,
+            onBackground = palette.ink, onSurface = palette.ink, outline = palette.border
+        )
+    }
+    MaterialTheme(colorScheme = colorScheme) {
+        CompositionLocalProvider(LocalAppPalette provides palette, content = content)
+    }
 }
 
 private data class IpSnapshot(
@@ -220,6 +280,13 @@ private data class PrivacySnapshot(
     val upstreamKbps: Int
 )
 
+private data class SecurityChecklistItem(
+    val id: String,
+    val category: String,
+    val title: String,
+    val guidance: String
+)
+
 private data class DnsResolverResult(
     val resolver: String,
     val addresses: List<String>,
@@ -235,11 +302,12 @@ private data class DnsLookupResult(
     val error: String? = null
 )
 
+private enum class DnsConsensusTone { NEUTRAL, POSITIVE, NOTICE }
+
 private data class DnsConsensus(
     val label: String,
     val detail: String,
-    val color: Color,
-    val background: Color
+    val tone: DnsConsensusTone
 )
 
 private data class WhoisLookupResult(
@@ -488,6 +556,19 @@ private object SecureApiKeyStore {
     private const val IpHistoryKey = "ip_history"
     private const val ConnectivityEndpointsKey = "connectivity_endpoints"
     private const val PortProbeTargetsKey = "port_probe_targets"
+    private const val SecurityChecklistProgressKey = "security_checklist_progress"
+    private const val ThemePreferenceKey = "theme_preference"
+
+    fun loadThemePreference(context: Context): ThemePreference = runCatching {
+        val value = decrypt(context.getSharedPreferences(PreferencesName, Context.MODE_PRIVATE).getString(ThemePreferenceKey, null)).orEmpty()
+        ThemePreference.values().firstOrNull { it.name == value } ?: ThemePreference.SYSTEM
+    }.getOrDefault(ThemePreference.SYSTEM)
+
+    fun saveThemePreference(context: Context, preference: ThemePreference) {
+        context.getSharedPreferences(PreferencesName, Context.MODE_PRIVATE).edit()
+            .putString(ThemePreferenceKey, encrypt(preference.name))
+            .apply()
+    }
 
     fun load(context: Context): ApiKeyConfig {
         val preferences = context.getSharedPreferences(PreferencesName, Context.MODE_PRIVATE)
@@ -636,8 +717,38 @@ private object SecureApiKeyStore {
         context.getSharedPreferences(PreferencesName, Context.MODE_PRIVATE).edit().remove(PortProbeTargetsKey).apply()
     }
 
+    fun loadSecurityChecklistProgress(context: Context): Set<String> = runCatching {
+        val encrypted = context.getSharedPreferences(PreferencesName, Context.MODE_PRIVATE).getString(SecurityChecklistProgressKey, null)
+        val array = JSONArray(decrypt(encrypted).orEmpty())
+        buildSet {
+            for (index in 0 until array.length()) {
+                array.optString(index).takeIf { it.isNotBlank() }?.let(::add)
+            }
+        }
+    }.getOrDefault(emptySet())
+
+    fun saveSecurityChecklistProgress(context: Context, completedIds: Set<String>) {
+        val serialized = JSONArray().apply { completedIds.sorted().forEach(::put) }
+        context.getSharedPreferences(PreferencesName, Context.MODE_PRIVATE).edit()
+            .putString(SecurityChecklistProgressKey, encrypt(serialized.toString()))
+            .apply()
+    }
+
+    fun clearSecurityChecklistProgress(context: Context) {
+        context.getSharedPreferences(PreferencesName, Context.MODE_PRIVATE).edit().remove(SecurityChecklistProgressKey).apply()
+    }
+
     fun clear(context: Context) {
-        context.getSharedPreferences(PreferencesName, Context.MODE_PRIVATE).edit().clear().apply()
+        context.getSharedPreferences(PreferencesName, Context.MODE_PRIVATE).edit()
+            .remove(AbuseKey)
+            .remove(IpApiIsKey)
+            .remove(MaxMindAccountIdKey)
+            .remove(MaxMindLicenseKey)
+            .remove(IpHubKey)
+            .remove(LegacyIpApiComKey)
+            .remove(CustomKey)
+            .remove(CustomEndpoint)
+            .apply()
     }
 
     private fun encrypt(value: String): String {
@@ -701,9 +812,45 @@ private val DefaultOfficialStatuses = listOf(
     OfficialStatusResult("Discord", "https://discordstatus.com/api/v2/status.json", "https://discordstatus.com")
 )
 
+private val LocalSecurityChecklist = listOf(
+    SecurityChecklistItem("updates", "基础维护", "及时安装系统与应用更新", "开启 Android 系统更新提示，并优先从可信应用商店更新常用应用。"),
+    SecurityChecklistItem("screen_lock", "基础维护", "使用强屏幕锁定", "使用不少于 6 位 PIN、密码或生物识别，不使用容易猜测的图案。"),
+    SecurityChecklistItem("auto_lock", "基础维护", "设置较短的自动锁屏时间", "降低设备无人看管时仍可直接访问数据的风险。"),
+    SecurityChecklistItem("backups", "基础维护", "检查备份与恢复范围", "确认备份账号、加密方式和需要排除的敏感数据符合你的预期。"),
+    SecurityChecklistItem("app_sources", "应用与权限", "仅从可信来源安装应用", "避免安装来历不明的 APK；如临时安装，完成后关闭未知来源安装权限。"),
+    SecurityChecklistItem("permissions", "应用与权限", "复核高敏感权限", "定期检查定位、麦克风、相机、通讯录、辅助功能和通知读取权限。"),
+    SecurityChecklistItem("accessibility", "应用与权限", "检查辅助功能服务", "只保留你明确需要且可信的辅助功能服务。"),
+    SecurityChecklistItem("admin_apps", "应用与权限", "检查设备管理权限", "确认没有不认识的应用拥有设备管理员或工作资料管理权限。"),
+    SecurityChecklistItem("wifi", "网络连接", "避免自动连接未知 Wi-Fi", "关闭自动加入开放或来源不明的无线网络。"),
+    SecurityChecklistItem("bluetooth", "网络连接", "不使用时关闭蓝牙可发现性", "仅在需要配对时开启，并移除不再使用的已配对设备。"),
+    SecurityChecklistItem("vpn", "网络连接", "核验 VPN / Private DNS 配置", "确认服务商、连接状态、Private DNS 主机名和失效时的实际行为符合预期。"),
+    SecurityChecklistItem("public_wifi", "网络连接", "在公共网络减少敏感操作", "优先使用 HTTPS；避免在不受信任网络中处理高价值账户或敏感传输。"),
+    SecurityChecklistItem("password_manager", "账户安全", "使用独立且强的密码", "优先使用可信密码管理器，不在多个重要站点复用密码。"),
+    SecurityChecklistItem("mfa", "账户安全", "为重要账户开启多因素认证", "优先考虑验证器、通行密钥或硬件安全密钥，并妥善保存恢复方式。"),
+    SecurityChecklistItem("recovery", "账户安全", "复核恢复邮箱和手机号", "移除不再使用的恢复方式，防止账户恢复链被接管。"),
+    SecurityChecklistItem("sessions", "账户安全", "定期检查登录会话", "在邮件、云盘、社交与金融服务中退出不认识的设备和会话。"),
+    SecurityChecklistItem("encryption", "数据与隐私", "使用设备加密与可信账户", "确认设备锁屏已启用，并了解云同步所使用的账户和加密边界。"),
+    SecurityChecklistItem("sharing", "数据与隐私", "限制敏感文件分享链接", "为共享设置最小权限、到期时间，并定期撤销不再需要的链接。"),
+    SecurityChecklistItem("notifications", "数据与隐私", "降低锁屏通知泄露", "对验证码、消息内容和敏感应用关闭锁屏完整预览。"),
+    SecurityChecklistItem("photos", "数据与隐私", "清理照片位置与元数据", "在公开分享前检查地点、时间、联系人和文档元数据。"),
+    SecurityChecklistItem("phishing", "识别与应急", "警惕钓鱼链接和假冒客服", "不要因短信、电话或弹窗催促而输入密码、验证码或恢复码。"),
+    SecurityChecklistItem("downloads", "识别与应急", "扫描可疑下载与附件", "不打开来源不明的安装包、文档宏或压缩文件；有疑问时先核验发送方。"),
+    SecurityChecklistItem("lost_device", "识别与应急", "准备设备遗失应对方案", "确认查找设备、远程锁定和远程擦除等功能可用，并保存恢复信息。"),
+    SecurityChecklistItem("incident", "识别与应急", "准备账户异常处置顺序", "发生异常时先隔离设备、修改关键密码、撤销会话，再联系服务商。"),
+    SecurityChecklistItem("payments", "高风险操作", "为支付和高价值账户设置额外保护", "开启交易提醒、强认证与独立恢复方式，警惕屏幕共享或远程控制请求。"),
+    SecurityChecklistItem("developer_options", "高风险操作", "不需要时关闭开发者选项", "完成调试后关闭 USB 调试，避免在不可信电脑上授权调试。"),
+    SecurityChecklistItem("root", "高风险操作", "理解 root / 解锁 Bootloader 的影响", "若设备已修改系统，请确认补丁、完整性、密钥与金融应用兼容性风险。"),
+    SecurityChecklistItem("family", "高风险操作", "为共享设备设立独立空间", "为家人、儿童或工作用途使用独立账户、用户或工作资料，避免混用凭据。"),
+    SecurityChecklistItem("review", "持续复核", "设定定期安全复核", "每 3–6 个月重新检查权限、会话、恢复方式、应用和网络配置。"),
+    SecurityChecklistItem("evidence", "持续复核", "记录关键配置变更", "在变更 VPN、DNS、账户或设备安全设置前后保留可理解的本地记录。")
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun NetScopeApp() {
+private fun NetScopeApp(
+    themePreference: ThemePreference,
+    onThemePreferenceChange: (ThemePreference) -> Unit
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var snapshot by remember { mutableStateOf<IpSnapshot?>(null) }
@@ -750,6 +897,9 @@ private fun NetScopeApp() {
     var queryLoading by remember { mutableStateOf(false) }
     var queryError by remember { mutableStateOf<String?>(null) }
     var showApiKeySettings by remember { mutableStateOf(false) }
+    var showDisplaySettings by remember { mutableStateOf(false) }
+    var showExportDialog by remember { mutableStateOf(false) }
+    var completedChecklistIds by remember { mutableStateOf(runCatching { SecureApiKeyStore.loadSecurityChecklistProgress(context) }.getOrDefault(emptySet())) }
 
     fun refreshIpInfo() {
         scope.launch {
@@ -809,29 +959,72 @@ private fun NetScopeApp() {
         }
     }
 
-    fun shareCurrentReport() {
-        val report = buildString {
-            appendLine("# NetScope 网络诊断摘要")
-            appendLine()
-            appendLine("生成时间：${LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))}")
-            snapshot?.let {
-                appendLine("当前 IPv4：${it.ipv4}")
-                appendLine("位置：${listOf(it.country, it.region, it.city).filter(String::isNotBlank).joinToString(" · ")}")
-                appendLine("ASN / 网络：${it.asn} · ${it.isp}")
-            }
-            appendLine("Android VPN：${if (privacy.vpnActive) "已连接" else "未检测到"}")
-            appendLine("Private DNS：${privacy.privateDnsMode}")
-            purityReport?.let { appendLine("公开风险主分：${formatRisk(it.score)} / 100；覆盖度：${formatRisk(it.coverage)}") }
-            speedResult?.let { appendLine("Cloudflare：延迟 ${it.latencyMs}ms；抖动 ${formatRisk(it.jitterMs)}ms；下载 ${formatRisk(it.downloadMbps)} Mbps") }
-            appendLine()
-            appendLine("说明：这是当前设备和当前网络的快照，不是欺诈概率、账号信誉或安全保证。")
-        }
+    fun shareTextReport(title: String, report: String) {
         context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
             putExtra(Intent.EXTRA_TEXT, report)
-            putExtra(Intent.EXTRA_TITLE, "NetScope 网络诊断摘要")
-        }, "分享诊断摘要"))
+            putExtra(Intent.EXTRA_TITLE, title)
+        }, "导出或分享"))
     }
+
+    fun buildMarkdownReport(): String = buildString {
+        appendLine("# NetScope 网络诊断摘要")
+        appendLine()
+        appendLine("生成时间：${LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))}")
+        snapshot?.let {
+            appendLine("当前 IPv4：${it.ipv4}")
+            appendLine("位置：${listOf(it.country, it.region, it.city).filter(String::isNotBlank).joinToString(" · ")}")
+            appendLine("ASN / 网络：${it.asn} · ${it.isp}")
+        }
+        appendLine("Android VPN：${if (privacy.vpnActive) "已连接" else "未检测到"}")
+        appendLine("网络传输：${privacy.transport}；系统验证：${if (privacy.validated) "已验证" else "未验证"}；计费：${if (privacy.metered) "按流量计费" else "非按流量计费"}")
+        appendLine("Private DNS：${privacy.privateDnsMode}${privacy.privateDnsHostname.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty()}")
+        purityReport?.let { appendLine("公开风险主分：${formatRisk(it.score)} / 100；覆盖度：${formatRisk(it.coverage)}") }
+        speedResult?.let { appendLine("Cloudflare：延迟 ${it.latencyMs}ms；抖动 ${formatRisk(it.jitterMs)}ms；下载 ${formatRisk(it.downloadMbps)} Mbps") }
+        appendLine("安全清单：已自行完成 ${completedChecklistIds.size.coerceAtMost(LocalSecurityChecklist.size)} / ${LocalSecurityChecklist.size} 项（本地自评）")
+        appendLine()
+        appendLine("说明：这是当前设备和当前网络的快照，不是欺诈概率、账号信誉、安全保证、浏览器指纹或 DNS 泄漏结论。")
+    }
+
+    fun buildJsonReport(): String = JSONObject().apply {
+        put("schema", "netscope.network-diagnostic.v1")
+        put("generatedAt", Instant.now().toString())
+        put("ip", snapshot?.let {
+            JSONObject().apply {
+                put("ipv4", it.ipv4); put("ipv6", it.ipv6); put("country", it.country); put("region", it.region)
+                put("city", it.city); put("timezone", it.timezone); put("isp", it.isp); put("asn", it.asn); put("networkType", it.networkType)
+            }
+        } ?: JSONObject.NULL)
+        put("androidNetwork", JSONObject().apply {
+            put("vpnActive", privacy.vpnActive); put("privateDnsMode", privacy.privateDnsMode); put("privateDnsHostname", privacy.privateDnsHostname)
+            put("dnsServers", JSONArray().apply { privacy.dnsServers.forEach(::put) }); put("transport", privacy.transport)
+            put("validated", privacy.validated); put("metered", privacy.metered); put("interfaceName", privacy.interfaceName)
+            put("downstreamKbpsEstimate", privacy.downstreamKbps); put("upstreamKbpsEstimate", privacy.upstreamKbps)
+        })
+        put("purity", purityReport?.let {
+            JSONObject().apply { put("score", it.score); put("coverage", it.coverage); put("label", it.label); put("checkedAt", it.checkedAt) }
+        } ?: JSONObject.NULL)
+        put("speed", speedResult?.let {
+            JSONObject().apply { put("latencyMs", it.latencyMs); put("jitterMs", it.jitterMs); put("downloadMbps", it.downloadMbps); put("downloadedBytes", it.downloadedBytes) }
+        } ?: JSONObject.NULL)
+        put("connectivity", JSONArray().apply {
+            endpoints.forEach { endpoint -> put(JSONObject().apply { put("name", endpoint.name); put("host", endpoint.host); put("status", endpoint.status.name); put("latencyMs", endpoint.latencyMs); put("detail", endpoint.detail) }) }
+        })
+        put("portProbes", JSONArray().apply {
+            portProbes.forEach { probe -> put(JSONObject().apply { put("host", probe.host); put("port", probe.port); put("status", probe.status.name); put("latencyMs", probe.latencyMs); put("detail", probe.detail) }) }
+        })
+        put("officialStatus", JSONArray().apply {
+            officialStatuses.forEach { status -> put(JSONObject().apply { put("name", status.name); put("indicator", status.indicator); put("description", status.description); put("updatedAt", status.updatedAt); put("statusPage", status.statusPage) }) }
+        })
+        put("dns", dnsResult?.let { result ->
+            JSONObject().apply {
+                put("host", result.host); put("recordType", result.recordType); put("systemAnswers", JSONArray().apply { result.addresses.forEach(::put) })
+                put("resolverResults", JSONArray().apply { result.resolverResults.forEach { resolver -> put(JSONObject().apply { put("resolver", resolver.resolver); put("answers", JSONArray().apply { resolver.addresses.forEach(::put) }); put("status", resolver.status); put("error", resolver.error) }) } })
+            }
+        } ?: JSONObject.NULL)
+        put("securityChecklist", JSONObject().apply { put("completed", completedChecklistIds.size.coerceAtMost(LocalSecurityChecklist.size)); put("total", LocalSecurityChecklist.size); put("scope", "local-self-assessment") })
+        put("notice", "User-initiated local export. No authorization credentials, IP history, or browser fingerprint data are included.")
+    }.toString(2)
 
     fun lookupIp() {
         val target = ipQuery.trim()
@@ -857,6 +1050,19 @@ private fun NetScopeApp() {
     fun clearIpHistory() {
         runCatching { SecureApiKeyStore.clearIpHistory(context) }
             .onSuccess { ipHistory = emptyList() }
+    }
+
+    fun toggleChecklistItem(itemId: String) {
+        val updated = completedChecklistIds.toMutableSet().apply {
+            if (!add(itemId)) remove(itemId)
+        }.toSet()
+        runCatching { SecureApiKeyStore.saveSecurityChecklistProgress(context, updated) }
+            .onSuccess { completedChecklistIds = updated }
+    }
+
+    fun clearChecklistProgress() {
+        runCatching { SecureApiKeyStore.clearSecurityChecklistProgress(context) }
+            .onSuccess { completedChecklistIds = emptySet() }
     }
 
     fun runPurityDiagnosis() {
@@ -1098,8 +1304,11 @@ private fun NetScopeApp() {
                     }
                 },
                 actions = {
-                    IconButton(onClick = { shareCurrentReport() }) {
-                        Icon(Icons.Outlined.Share, contentDescription = "分享诊断摘要", tint = Ink)
+                    IconButton(onClick = { showDisplaySettings = true }) {
+                        Icon(Icons.Outlined.Settings, contentDescription = "显示设置", tint = Ink)
+                    }
+                    IconButton(onClick = { showExportDialog = true }) {
+                        Icon(Icons.Outlined.Share, contentDescription = "导出或分享诊断摘要", tint = Ink)
                     }
                     IconButton(onClick = { refreshIpInfo() }, enabled = !ipLoading) {
                         if (ipLoading) {
@@ -1183,6 +1392,22 @@ private fun NetScopeApp() {
                     loading = purityLoading,
                     error = purityError,
                     onRetry = { runPurityDiagnosis() }
+                )
+            }
+            item {
+                SectionHeader(
+                    icon = Icons.Outlined.Security,
+                    title = "离线安全清单",
+                    subtitle = "30 项本地自评与加密进度；不是自动安全扫描或合规认证",
+                    actionLabel = if (completedChecklistIds.isEmpty()) null else "清除进度",
+                    onAction = if (completedChecklistIds.isEmpty()) null else ({ clearChecklistProgress() })
+                )
+            }
+            item {
+                SecurityChecklistCard(
+                    items = LocalSecurityChecklist,
+                    completedIds = completedChecklistIds,
+                    onToggle = { toggleChecklistItem(it) }
                 )
             }
             item {
@@ -1313,6 +1538,31 @@ private fun NetScopeApp() {
         }
     }
 
+    if (showExportDialog) {
+        ExportFormatDialog(
+            onDismiss = { showExportDialog = false },
+            onShareMarkdown = {
+                shareTextReport("NetScope 网络诊断摘要", buildMarkdownReport())
+                showExportDialog = false
+            },
+            onShareJson = {
+                shareTextReport("NetScope 网络诊断摘要 JSON", buildJsonReport())
+                showExportDialog = false
+            }
+        )
+    }
+
+    if (showDisplaySettings) {
+        DisplaySettingsDialog(
+            selectedPreference = themePreference,
+            onDismiss = { showDisplaySettings = false },
+            onSave = {
+                onThemePreferenceChange(it)
+                showDisplaySettings = false
+            }
+        )
+    }
+
     if (showPortProbeSettings) {
         PortProbeSettingsDialog(
             savedProbes = portProbes,
@@ -1339,6 +1589,82 @@ private fun NetScopeApp() {
             onClear = { clearApiKeys() }
         )
     }
+}
+
+@Composable
+private fun ExportFormatDialog(
+    onDismiss: () -> Unit,
+    onShareMarkdown: () -> Unit,
+    onShareJson: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("导出诊断摘要") },
+        text = {
+            Column {
+                Text("导出仅在你点击后通过 Android 系统分享面板执行，不会上传到 NetScope。内容不含授权 Key、加密 IP 历史或浏览器指纹信息。", color = MutedInk, fontSize = 12.sp, lineHeight = 18.sp)
+                Spacer(Modifier.height(12.dp))
+                OutlinedButton(onClick = onShareMarkdown, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Outlined.Share, contentDescription = null, modifier = Modifier.size(17.dp))
+                    Spacer(Modifier.width(7.dp)); Text("分享 Markdown 文本")
+                }
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(onClick = onShareJson, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Outlined.Share, contentDescription = null, modifier = Modifier.size(17.dp))
+                    Spacer(Modifier.width(7.dp)); Text("分享 JSON 摘要")
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { OutlinedButton(onClick = onDismiss) { Text("取消") } }
+    )
+}
+
+@Composable
+private fun DisplaySettingsDialog(
+    selectedPreference: ThemePreference,
+    onDismiss: () -> Unit,
+    onSave: (ThemePreference) -> Unit
+) {
+    var draft by remember(selectedPreference) { mutableStateOf(selectedPreference) }
+    val choices = listOf(
+        ThemePreference.SYSTEM to "跟随系统",
+        ThemePreference.LIGHT to "浅色",
+        ThemePreference.DARK to "深色"
+    )
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("显示设置") },
+        text = {
+            Column {
+                Text("主题选择仅加密保存在当前设备。深色模式会调整页面背景、卡片、文本和状态色；不会改变检测结果或任何网络请求。", color = MutedInk, fontSize = 12.sp, lineHeight = 18.sp)
+                Spacer(Modifier.height(12.dp))
+                choices.forEach { (preference, label) ->
+                    val isSelected = draft == preference
+                    Row(
+                        modifier = Modifier.fillMaxWidth().clickable { draft = preference }.padding(vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(label, fontWeight = FontWeight.Medium, color = Ink, fontSize = 14.sp)
+                            Text(
+                                when (preference) {
+                                    ThemePreference.SYSTEM -> "随 Android 的当前深浅色设置变化"
+                                    ThemePreference.LIGHT -> "始终使用浅色界面"
+                                    ThemePreference.DARK -> "始终使用深色界面"
+                                },
+                                color = MutedInk,
+                                fontSize = 11.sp
+                            )
+                        }
+                        StatusBadge(if (isSelected) "已选" else "选择", if (isSelected) Green else MutedInk, if (isSelected) SoftGreen else SoftBlue)
+                    }
+                }
+            }
+        },
+        confirmButton = { Button(onClick = { onSave(draft) }) { Text("保存显示设置") } },
+        dismissButton = { OutlinedButton(onClick = onDismiss) { Text("取消") } }
+    )
 }
 
 @Composable
@@ -1830,6 +2156,70 @@ private fun SecretTextField(
 }
 
 @Composable
+private fun SecurityChecklistCard(
+    items: List<SecurityChecklistItem>,
+    completedIds: Set<String>,
+    onToggle: (String) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val completedCount = items.count { it.id in completedIds }
+    Card(
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = CardSurface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("已完成 $completedCount / ${items.size} 项", fontWeight = FontWeight.Bold, color = Ink, fontSize = 17.sp)
+                    Text("进度仅加密保存在当前设备；由你自行判断是否完成。", color = MutedInk, fontSize = 11.sp, lineHeight = 16.sp)
+                }
+                StatusBadge("离线", Green, SoftGreen)
+                Spacer(Modifier.width(6.dp))
+                TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "收起" else "查看") }
+            }
+            Spacer(Modifier.height(10.dp))
+            Text(
+                "这是面向日常设备、账户、网络和隐私维护的本地自评清单。它不会读取系统设置、扫描应用、判断设备是否安全，也不是合规或专业安全审计。",
+                color = MutedInk,
+                fontSize = 12.sp,
+                lineHeight = 18.sp
+            )
+            if (expanded) {
+                Spacer(Modifier.height(12.dp))
+                items.groupBy { it.category }.forEach { (category, categoryItems) ->
+                    Text(category, fontWeight = FontWeight.SemiBold, color = Blue, fontSize = 13.sp)
+                    Spacer(Modifier.height(4.dp))
+                    categoryItems.forEach { item ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onToggle(item.id) }
+                                .padding(vertical = 5.dp),
+                            verticalAlignment = Alignment.Top
+                        ) {
+                            Checkbox(
+                                checked = item.id in completedIds,
+                                onCheckedChange = { onToggle(item.id) },
+                                colors = CheckboxDefaults.colors(checkedColor = Green)
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Column(modifier = Modifier.weight(1f).padding(top = 10.dp)) {
+                                Text(item.title, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = Ink)
+                                Text(item.guidance, fontSize = 11.sp, color = MutedInk, lineHeight = 16.sp)
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(7.dp))
+                }
+                Text("提示：可随时清除进度；清单没有联网评分，也不会上传勾选内容。", color = MutedInk, fontSize = 11.sp, lineHeight = 16.sp)
+            }
+        }
+    }
+}
+
+@Composable
 private fun PurityDiagnosisCard(
     report: PurityReport?,
     loading: Boolean,
@@ -2298,7 +2688,12 @@ private fun DnsLookupCard(
                             Text("解析器对比", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = Ink)
                             Text(consensus.detail, fontSize = 10.sp, color = MutedInk, lineHeight = 14.sp)
                         }
-                        StatusBadge(consensus.label, consensus.color, consensus.background)
+                        val consensusColors = when (consensus.tone) {
+                            DnsConsensusTone.NEUTRAL -> MutedInk to SoftBlue
+                            DnsConsensusTone.POSITIVE -> Green to SoftGreen
+                            DnsConsensusTone.NOTICE -> Amber to SoftAmber
+                        }
+                        StatusBadge(consensus.label, consensusColors.first, consensusColors.second)
                     }
                     if (it.resolverResults.isNotEmpty()) {
                         Spacer(Modifier.height(12.dp))
@@ -2334,10 +2729,10 @@ private fun analyzeDnsConsensus(result: DnsLookupResult): DnsConsensus {
     val populated = remoteSets.filter { it.isNotEmpty() }
     val systemSet = result.addresses.map { it.trim().lowercase() }.filter { it.isNotBlank() }.toSet()
     return when {
-        successful.isEmpty() -> DnsConsensus("未覆盖", "公共 DoH 解析器均未返回可用结果。", MutedInk, SoftBlue)
-        populated.isEmpty() -> DnsConsensus("无记录", "可访问的公共解析器均未返回该记录类型。", MutedInk, SoftBlue)
-        populated.distinct().size == 1 && (systemSet.isEmpty() || systemSet == populated.first()) -> DnsConsensus("一致", "可用解析器返回相同记录；不代表永久或全球一致。", Green, SoftGreen)
-        else -> DnsConsensus("有差异", "至少两个可用解析器或系统解析返回不同记录；可能是 CDN、地域、缓存或策略差异。", Amber, SoftAmber)
+        successful.isEmpty() -> DnsConsensus("未覆盖", "公共 DoH 解析器均未返回可用结果。", DnsConsensusTone.NEUTRAL)
+        populated.isEmpty() -> DnsConsensus("无记录", "可访问的公共解析器均未返回该记录类型。", DnsConsensusTone.NEUTRAL)
+        populated.distinct().size == 1 && (systemSet.isEmpty() || systemSet == populated.first()) -> DnsConsensus("一致", "可用解析器返回相同记录；不代表永久或全球一致。", DnsConsensusTone.POSITIVE)
+        else -> DnsConsensus("有差异", "至少两个可用解析器或系统解析返回不同记录；可能是 CDN、地域、缓存或策略差异。", DnsConsensusTone.NOTICE)
     }
 }
 

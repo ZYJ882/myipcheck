@@ -1,6 +1,6 @@
 # MyIPCheck 对照 MyIP / ipcheck.ing 复刻差异审计
 
-**审计对象**：`ZYJ882/myipcheck` Android 原生应用，源码基线为 `e145ad2`，对应 Release **v1.0.20**。
+**审计对象**：`ZYJ882/myipcheck` Android 原生应用，当前源码基线为 v1.0.21 发布批次。
 
 **对照对象**：[jason5ng32/MyIP][1] 与 [ipcheck.ing][2] 的公开功能入口。
 
@@ -27,7 +27,7 @@ MyIPCheck 现已覆盖一个更完整的**移动端网络诊断子集**：任意
 | DNS Resolution | 多解析器、国家分组、深度模式含 ECS/DNSSEC | **部分实现** | 已交叉系统、Cloudflare、Google Public DNS、Quad9，并显示结果差异；尚无国家分组、ECS/DNSSEC 校验或全部递归解析器枚举。 | P1 |
 | 浏览器指纹 / Browser Information | Canvas、WebGL、JS 特征及浏览器环境 | **架构不等价** | APK 没有同一浏览器上下文；不应将设备信息伪装为浏览器指纹检测。 | P2 |
 | Invisibility Test | 独立验证代理/VPN 使用状态 | **部分实现** | 透明度诊断可并列显示代理、VPN、Tor、IDC/ASN 等公开信号；没有独立的目标站点语义或专用报告页面。 | P2 |
-| Security Checklist | 大型安全清单、分类和本地进度 | **未实现** | 缺少清单数据、领域筛选和完成进度。 | P2 |
+| Security Checklist | 大型安全清单、分类和本地进度 | **已实现基础版** | 已提供 30 项按领域分组的离线自评建议，完成进度加密本地保存并可清除；未复刻上游全部 258 项，也不读取系统设置、扫描应用或给出合规结论。 | P2 |
 | Speed Test | Edge 下载、上传、延迟、抖动、可选包大小 | **部分实现** | 已测 Cloudflare 轻量延迟、中位延迟、抖动及最多 1 MB 下载吞吐；无上传测速、长时多档位测试或运营商级对比。 | P1 |
 | Global Latency Test | Globalping 多国家/大洲探针 Ping | **已实现，受限调用** | 用户点击后最多从美国、德国、新加坡各请求 1 个探针、3 个 ping 包；遵守公开 API 配额，不代表本机延迟。 | P1 |
 | MTR Test | Globalping / 全球探针路径追踪 | **未实现** | 尚无远端 MTR 任务、跳数、丢包和 ASN 路径展示。 | P1 |
@@ -38,10 +38,10 @@ MyIPCheck 现已覆盖一个更完整的**移动端网络诊断子集**：任意
 | ASN Info | ASN 详情 | **已实现基础版** | 支持 RIPEstat ASN 概览和当前 IP ASN 信息；可继续丰富前缀、地理、注册信息和历史。 | P1 |
 | ASN 历史与拓扑 | 前缀历史、到 Tier 1 的上游路径 | **部分实现** | 已显示 RIS AS-path 左右邻居；它们是观测路径位置，不能自动解释为商业上下游，也没有历史时间线或图形。 | P2 |
 | Service Status | 官方状态、实时可用性、近期事故 | **部分实现** | 显示 GitHub、Cloudflare、OpenAI、Discord 的公开官方状态摘要，并与本机端口连通性分开；未做跨服务事故聚合与长期事件历史。 | P1 |
-| Shareable Reports | 过期链接、Markdown、JSON | **部分实现** | 支持 Android 系统分享本地文本摘要和 DNS 结果；没有服务器托管、过期 token、结构化 JSON/Markdown 报告。 | P1 |
+| Shareable Reports | 过期链接、Markdown、JSON | **部分实现** | 支持 Android 系统分享 Markdown 兼容文本、DNS 文本结果及结构化 JSON 摘要；没有服务器托管、过期 token 或公开链接。 | P1 |
 | Curl API | `curl` 获取 IP | **未实现** | Android 客户端并未部署对外兼容 API。 | P2 |
 | Earth Online | 全球互联网中断广播 | **未实现** | 无公共 outage feed 聚合、地图或事件面板。 | P2 |
-| Dark Mode | 系统跟随和手动切换 | **部分实现** | Compose 已提供应用主题；完整系统跟随和可选择主题策略仍应单列验证和完善。 | P2 |
+| Dark Mode | 系统跟随和手动切换 | **已实现基础版** | 可选择跟随系统、始终浅色或始终深色，界面调色板随选择切换；尚无 Material You 动态色、定时切换或每页独立外观设置。 | P2 |
 | PWA / Chrome App | 可安装 Web/PWA 体验 | **架构不适用** | Android APK 不等同 PWA；如需复刻，应另建 Web 前端。 | P2（另项目） |
 | Keyboard Shortcuts | 工具页快捷键和帮助 | **架构不适用** | 以触控移动端为主，没有桌面快捷键体系。 | P2 |
 | 多语言 | 多语言 locale pack | **未实现** | 当前主要为简体中文，尚无 Android locale 资源体系。 | P1 |
@@ -50,9 +50,9 @@ MyIPCheck 现已覆盖一个更完整的**移动端网络诊断子集**：任意
 | In-depth Persona Check | 目标地区视角与网站可见信息对比 | **未实现** | 需要浏览器会话、远端视角或后端协作，原生本机字段不足以等价复刻。 | P2 |
 | 授权与风险数据源 | 服务器侧配置 MaxMind 等数据 | **已实现本地授权子集** | AbuseIPDB、ipapi.is、MaxMind Insights、IPHub 可在授权设置中启用，凭据经 Android Keystore AES-GCM 本地加密保存；空 Key 时回退公共默认源。 | P0 |
 
-## v1.0.20 已实现能力及其边界
+## v1.0.21 已实现能力及其边界
 
-当前单页原型已经包含 IP/IPv6、风险信号与透明度、HTTPS 连通性、Android 网络环境、轻量测速、DNS、Whois、端口探测、ASN、MAC、Globalping、OONI、服务状态、加密历史和文本分享。所有主动网络请求由用户操作触发；不设后台持续轮询，也不申请额外的敏感权限。
+当前单页原型已经包含 IP/IPv6、风险信号与透明度、HTTPS 连通性、Android 网络环境、轻量测速、DNS、Whois、端口探测、ASN、MAC、Globalping、OONI、服务状态、加密历史、离线安全清单、主题选择以及 Markdown/JSON 本地导出。所有主动网络请求由用户操作触发；不设后台持续轮询，也不申请额外的敏感权限。
 
 | 模块 | 当前可靠表述 | 不应作出的表述 |
 |---|---|---|
@@ -61,10 +61,12 @@ MyIPCheck 现已覆盖一个更完整的**移动端网络诊断子集**：任意
 | DNS 共识 | 是多个可用解析路径的答案对比和差异提示。 | 不是递归 DNS 泄漏、ECS、DNSSEC 或运营商劫持的确定性判断。 |
 | 官方状态 | 是供应商官方公开状态端点返回的摘要。 | 不等于手机到其服务的端到端可达性，也不能替代事故诊断。 |
 | 网络环境 | 是 Android `NetworkCapabilities` 和链路属性可见的网络状态。 | 不是实测速率、WebRTC、Canvas/WebGL、JavaScript 或网页指纹检测。 |
+| 安全清单 | 是用户自行确认的离线设备与账户维护提醒，进度仅加密保存在本机。 | 不是系统设置扫描、恶意软件检测、合规证明或安全保证。 |
+| 本地导出 | 是由用户点击触发的 Markdown/JSON 快照分享，且不含授权凭据和 IP 历史。 | 不是服务器报告托管、在线公开链接或长期证据存档。 |
 
 ## 下一批的合理优先级
 
-第一优先级应当是**本地安全清单**、主题/多语言、查询/诊断结果的可复制与更丰富的结构化本地导出。这些能力不需要把浏览器字段或第三方后端冒充为本机结果。第二优先级可以在严格配额和明确远端语义的前提下扩展 Globalping MTR，以及改善 OONI 查询的筛选和结果展示。任何真正的 WebRTC、浏览器指纹、Persona 和深度 DNS Leak 功能均应采用独立 Web companion 或受控后端，并在界面清晰标识隐私、数据来源和非原生范围。
+第一优先级应当是**多语言资源体系**、更精细的本地导出筛选以及安全清单的可访问性与搜索体验。这些能力不需要把浏览器字段或第三方后端冒充为本机结果。第二优先级可以在严格配额和明确远端语义的前提下扩展 Globalping MTR，以及改善 OONI 查询的筛选和结果展示。任何真正的 WebRTC、浏览器指纹、Persona 和深度 DNS Leak 功能均应采用独立 Web companion 或受控后端，并在界面清晰标识隐私、数据来源和非原生范围。
 
 ## 架构建议
 

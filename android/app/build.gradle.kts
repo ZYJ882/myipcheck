@@ -12,9 +12,9 @@ android {
         applicationId = "ing.ipcheck.netscope"
         minSdk = 26
         targetSdk = 35
-        // v1.0.20 adds configurable port probes, DNS consensus export and extended device diagnostics.
-        versionCode = providers.gradleProperty("versionCode").orNull?.toIntOrNull() ?: 1020
-        versionName = providers.gradleProperty("versionName").orNull ?: "1.0.20"
+        // v1.0.21 adds encrypted offline checklist progress, theme control and Markdown/JSON diagnostics export.
+        versionCode = providers.gradleProperty("versionCode").orNull?.toIntOrNull() ?: 1021
+        versionName = providers.gradleProperty("versionName").orNull ?: "1.0.21"
     }
 
     val releaseStorePath = providers.gradleProperty("signingStoreFile").orNull
