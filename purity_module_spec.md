@@ -1,115 +1,99 @@
-# 增强透明纯净度诊断模块规格 v2.1
+# 增强透明网络出口风险诊断模块规格 v3.0
 
 ## 产品定位
 
-“增强透明纯净度诊断”是 MyIPCheck 的**独立、可解释公开网络出口风险信号指数**。它参考公开 IP 风险服务的字段语义、分段和误报控制原则，但不复制、反推或声称使用任何厂商的专有算法、人工 IP 段标注、服务器或商业风险数据库。[1] [2] [3]
+“透明网络出口风险诊断”是 MyIPCheck 独立实现的**公开网络出口风险信号指数**。它使用可公开核验的字段语义、连续时间衰减、分层风险预算与可见覆盖度，不复制、反推或声称使用任何第三方的专有算法、人工 IP 段标注、行为数据库或商业风控值。[1] [2] [3]
 
-> **100.0 分**仅表示本次成功覆盖的公开来源中未见可计入风险的信号。它不是绝对安全、欺诈概率、账号信誉、个人评价或业务决策结论；没有真实结果标签时，不能声称模型已概率校准。[4]
+> **主分 100.0** 仅表示本次已覆盖的来源中未识别到可计入的公开风险信号。它不是绝对安全、欺诈概率、个人/账号信誉、支付结论或业务决策建议。缺失来源与字段必须在“证据覆盖度”中反映，而不能被解释为无风险。
 
-## 评分结构
+## 输出结构
 
-APP 以 `Double` 进行计算，并显示一位小数：
+APP 使用 `Double` 计算并显示一位小数。输出包含一个主分、四个有上限的风险层和一个独立覆盖度指标：
 
 ```text
-总风险 = clamp(匿名化网络 + 滥用与攻击 + 托管基础设施 + 观测完整性, 0, 100)
-总分   = 100 - 总风险
+总风险 = clamp(直接恶意与滥用 + 匿名化/透明度 + 网络上下文 + 出口可观测性, 0, 100)
+主分   = 100 - 总风险
+
+覆盖度 = Σ(风险层权重 × 该层关键字段覆盖状态) / 100 × 100
 ```
 
-| 风险桶 | 上限 | 主要输入 | 误报控制 |
-| --- | ---: | --- | --- |
-| 匿名化网络 | 45.0 | Tor、代理、VPN、ProxyCheck 置信度与最近检出时间 | 同一匿名化事实只取最强结论，双来源只给有限支持。 |
-| 滥用与攻击 | 40.0 | AbuseIPDB 原始分、报告数与时效；ProxyCheck 风险、置信度、攻击历史；公开布尔标记 | 同类供应商结果取最强值，独立来源支持最高仅 4.0。 |
-| 托管基础设施 | 12.0 | ASN / 组织启发式、托管、数据中心与 ProxyCheck 置信度 | 托管不等同恶意，严格限制为轻量提示。 |
-| 观测完整性 | 8.0 | 同次检测的出口 IPv4 冲突 | 国家库和双栈地理差异不参与风险。 |
+| 风险层 | 上限 / 覆盖权重 | 主要输入 | 误报控制 |
+|---|---:|---|---|
+| 直接恶意与滥用 | 70.0 | AbuseIPDB 原始分、报告量、时效；ProxyCheck 风险、受损、攻击历史；ipapi.is 滥用/爬虫 | 同类供应商结论不线性相加；不同来源仅形成有限交叉支持。 |
+| 匿名化 / 透明度 | 15.0 | Tor、代理、VPN、ProxyCheck 置信度与最近检出时间 | 网络属性单列，不等同于历史恶意。 |
+| 网络上下文 | 10.0 | ASN/组织启发式、托管、数据中心 | 仅作低上限先验；云/IDC/托管不等于恶意。 |
+| 出口可观测性 | 5.0 | 同次 ipify 与 ipwho.is 返回的 IPv4 是否一致 | 仅反映当前观测路径差异，不推断历史行为。 |
 
-任何来源未配置、接口超时、配额耗尽、未知值或字段未覆盖都会显示为“未覆盖”，**绝不扣分**。
+## 连续计算原则
 
-## 连续数值规则
-
-当来源返回数值或时间时，APP 不再按 25 / 50 / 75 等固定区间跳档。设信号距今天数为 `d`，时效系数为：
+对于存在数值和时间字段的来源，APP 不按固定档位跳变。时效系数和 ProxyCheck 可靠度为：
 
 ```text
 F(d) = clamp(0.45 + 0.55 × e^(-d / 21), 0.45, 1.00)
+R    = clamp((0.30 + 0.70 × confidence / 100) × F(last_seen), 0.25, 1.00)
 ```
 
-ProxyCheck 返回置信度 `c`（0–100）时：
+`R` 仅缩放 ProxyCheck 的自身信号，不表示用户身份或恶意概率。AbuseIPDB 原始分、报告量和报告时效分别进入连续计算；同一风险语义跨供应商使用“取最强证据 + 有限交叉支持”的饱和式聚合，避免重复扣分。
 
-```text
-R = clamp((0.30 + 0.70 × c / 100) × F(最近检出日), 0.25, 1.00)
-```
+完整的可复算公式、风险预算、布尔证据处理、覆盖度定义与后续校准治理见 [`purity_scoring_model_v3.md`](purity_scoring_model_v3.md)。
 
-`R` 只表示本模块对 ProxyCheck 当前信号的缩放可靠度，并非用户身份或代理概率。[3]
+## 字段缺失与来源状态
 
-| 原始输入 | 逐分映射 |
-| --- | --- |
-| AbuseIPDB 分 `a` | `34.0 × (a / 100)^1.35` |
-| AbuseIPDB 报告数 `n` | `2.0 × ln(1+n) / ln(101)` |
-| AbuseIPDB 时效 | `2.0 × F(最近报告日)`，仅当 `a > 0` |
-| AbuseIPDB 合计 | 三项相加后最高 `36.0` |
-| ProxyCheck 风险 `p` | `16.0 × (p / 100)^1.20 × R` |
-| ProxyCheck 攻击事件数 `h` | `4.0 × ln(1+h) / ln(101) × R` |
-| ProxyCheck 托管标记 | `4.0 + 3.0 × R` |
+评分实现必须严格区分“字段明确返回 false/0”与“字段缺失、类型错误或响应不完整”。所有布尔和数值风险字段使用可空解析：
 
-因此，AbuseIPDB 从 30 到 31、ProxyCheck 从 40 到 41，或同一风险在不同置信度和不同最后发现日期下，都会造成不同的小数风险和总分。AbuseIPDB 的 Check 端点公开返回 `abuseConfidenceScore`、`totalReports` 和 `lastReportedAt`；ProxyCheck v3 公开返回 0–100 `confidence`、`risk`、`last_seen` 和攻击历史。[2] [3]
+| 来源/字段状态 | 风险处理 | 覆盖度处理 | 页面状态 |
+|---|---|---|---|
+| 明确 `false` / `0` | 作为零风险输入参与计算 | 视为已覆盖 | 未检出 |
+| 明确 `true` / 正数 | 按对应连续或布尔规则计入 | 视为已覆盖 | 命中风险提示 |
+| 字段缺失、类型错误或响应不完整 | 不扣风险 | 对应层未覆盖 | 字段未覆盖 |
+| Key 未配置、接口超时、配额耗尽或请求失败 | 不扣风险 | 对应层未覆盖 | 未配置 / 未覆盖 |
 
-## 仅有布尔值的证据
+这样可以确保“未观测到”不会被静默显示为“无风险”。
 
-有些公开接口只提供“是 / 否”，没有足以细分的原始数值。此类信号使用明确基准权重，并在 APP 明细中说明限制；不会捏造小数概率。
-
-| 二元证据 | 规则 |
-| --- | --- |
-| Tor Project 官方确认 | `45.0`，匿名化桶上限。 |
-| 其他来源 Tor | `38.0`；若 ProxyCheck 同时确认，加 `4.0 × R`。 |
-| 仅 ipapi.is 代理 / VPN | `28.0 / 22.0`。 |
-| ipapi.is `is_abuser=true` | `16.0`。 |
-| ipapi.is `is_crawler=true` | `4.0`。 |
-| ASN / 组织托管关键词 | `3.0`。 |
-| ipapi.is `is_datacenter=true` | `6.5`。 |
-| 同次出口 IPv4 不一致 | `8.0`。 |
-
-代理 / VPN 的 ProxyCheck 路径、双源交叉验证、受损、爬虫和托管会用 `R` 连续缩放。所有结果会先在风险桶内去重和封顶，再汇总，避免同一网络事实被多个供应商线性重复扣分。
-
-## 不计分信号
+## 不计入历史滥用风险的信号
 
 | 信号 | 处理方式 |
-| --- | --- |
+|---|---|
 | `egress_service` 受管理出口 | 仅展示。 |
 | Android VPN 与 Private DNS 状态 | 仅展示。 |
 | 国家代码差异 | 仅展示。 |
 | IPv4 / IPv6 国家差异 | 仅展示。 |
-| Key 未配置、失败或字段缺失 | 显示“未覆盖”，不扣分。 |
+| 自定义 HTTPS 地址与 Key | 当前仅加密保存，不发起请求、不参与评分。 |
 
-## 展示档位
+## 展示规则
 
-| 总分 | 标签 | 含义 |
-| ---: | --- | --- |
-| 90.0–100.0 | 低风险信号 | 已覆盖来源未见明显风险信号；未覆盖不是安全结论。 |
-| 70.0–89.9 | 轻度提示 | 存在有限、可解释的网络属性或行为提示。 |
-| 40.0–69.9 | 需复核 | 发现较强匿名化、滥用或出口观测信号。 |
-| 0.0–39.9 | 高风险提示 | 多个独立风险桶同时命中；不可单独据此推断个人、账号或交易。 |
+主分的标签与覆盖度分开解释：
 
-报告显示每个风险桶的“实际风险 / 上限”，并在明细中显示原始分、连续换算结果、置信度 / 时效输入和有限交叉验证增量。
+| 条件 | 标签 | 含义 |
+|---|---|---|
+| 覆盖度 `< 50` | 关键证据覆盖不足 | 主分只反映已覆盖来源，不能据此判断安全性。 |
+| 主分 `90–100` 且覆盖度 `≥ 50` | 低风险信号 | 已覆盖来源中未见明显公开风险信号。 |
+| 主分 `70–89.9` | 轻度提示 | 存在有限、可解释的公开风险或透明度提示。 |
+| 主分 `40–69.9` | 需复核 | 已发现较强风险、透明度或出口观测提示。 |
+| 主分 `0–39.9` | 高风险提示 | 多个高权重公开风险信号同时命中。 |
+
+报告必须显示各风险层“实际风险 / 上限”、原始字段、连续换算结果、时效/置信度输入、覆盖度和未覆盖原因。
 
 ## 数据、隐私与校准边界
 
-诊断按需调用 `api.ipify.org`、`ipapi.co`、`ipwho.is`、`proxycheck.io` 和 Tor Project。用户自行配置 Key 后，APP 还会调用 AbuseIPDB APIv2 Check 与 ipapi.is 官方 JSON POST 端点。[2] [5] [6]
+诊断按需调用 `api.ipify.org`、`ipapi.co`、`ipwho.is`、`proxycheck.io` 和 Tor Project。用户本地配置 Key 后，APP 才调用 AbuseIPDB APIv2 Check 与 ipapi.is 官方 JSON POST 端点。[2] [4] [5]
 
-调用仅使用当前公网 IP 或由服务自动观察到的请求来源 IP；APP 不传递账号、Cookie、浏览历史、设备指纹、位置权限或其他个人敏感信息。AbuseIPDB、ipapi.is 以及成对配置的自定义 HTTPS 请求地址与 Key 使用 Android Keystore 的 AES-GCM 密钥加密后仅存于本机；自定义地址与 Key 当前不会发送或参与评分。
+APP 仅使用当前公网 IP 或由服务自动观察到的请求来源 IP；不发送账号、Cookie、浏览历史、设备指纹或位置权限。AbuseIPDB、ipapi.is 和自定义 HTTPS 请求配置的 Key 使用 Android Keystore AES-GCM 密钥仅在本机加密保存。
 
-这些权重是基于公开字段语义、分段和误报控制设计的**可解释先验**，不是经 MyIPCheck 用户行为训练的统计模型。后续只有在合法、最小化、经授权的真实结果数据下，才应通过校准曲线和观察事件率调整系数。[4]
-
-完整公式、情景测试和引用请见 [`purity_scoring_model_v2.md`](purity_scoring_model_v2.md)。
+当前权重是基于公开字段语义、连续性与误报控制的**可解释先验**。未来只有在获得合法、最小化、经授权、独立于供应商结论的真实结果标签后，才应以时间外验证、校准曲线、Brier score、PR-AUC、误报率和漏报率来校准或更新参数。[6] [7]
 
 ## 参考
 
-[1] [GetIPIntel Detection API](https://getipintel.net/free-proxy-vpn-tor-detection-api/)
+[1] [Spamhaus — IP Address Reputation](https://www.spamhaus.org/ip-reputation/)
 
 [2] [AbuseIPDB APIv2 Documentation](https://docs.abuseipdb.com/)
 
-[3] [ProxyCheck v3 API Documentation](https://proxycheck.io/api/)
+[3] [CrowdSec — IP Range Reputation System](https://www.crowdsec.net/blog/introducing-the-ip-range-reputation-system)
 
-[4] [Crowson et al., Assessing Calibration of Prognostic Risk Scores](https://pmc.ncbi.nlm.nih.gov/articles/PMC3933449/)
+[4] [ProxyCheck v3 API Documentation](https://proxycheck.io/api/)
 
 [5] [ipapi.is Developers Documentation](https://ipapi.is/developers.html)
 
-[6] [Tor Project IP API](https://check.torproject.org/api/ip)
+[6] [scikit-learn — Probability Calibration](https://scikit-learn.org/stable/modules/calibration.html)
+
+[7] [NIST AI Risk Management Framework](https://www.nist.gov/itl/ai-risk-management-framework)
