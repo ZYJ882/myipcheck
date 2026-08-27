@@ -41,6 +41,7 @@ import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.material.icons.outlined.VisibilityOff
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Hub
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Language
@@ -51,6 +52,8 @@ import androidx.compose.material.icons.outlined.Public
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Router
 import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material.icons.outlined.SettingsEthernet
 import androidx.compose.material.icons.outlined.Speed
@@ -103,6 +106,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.InetAddress
@@ -115,6 +119,7 @@ import java.time.Instant
 import java.time.LocalDateTime
 import java.time.OffsetDateTime
 import java.time.format.DateTimeFormatter
+import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.ln
 import kotlin.math.pow
@@ -178,6 +183,16 @@ private data class IpSnapshot(
     val refreshedAt: String
 )
 
+private data class IpHistoryEntry(
+    val ip: String,
+    val country: String,
+    val city: String,
+    val asn: String,
+    val networkType: String,
+    val seenAt: String,
+    val source: String
+)
+
 private enum class CheckStatus { IDLE, RUNNING, SUCCESS, FAILURE }
 
 private data class EndpointResult(
@@ -195,9 +210,17 @@ private data class PrivacySnapshot(
     val dnsServers: List<String>
 )
 
+private data class DnsResolverResult(
+    val resolver: String,
+    val addresses: List<String>,
+    val status: String,
+    val error: String? = null
+)
+
 private data class DnsLookupResult(
     val host: String,
     val addresses: List<String>,
+    val resolverResults: List<DnsResolverResult> = emptyList(),
     val error: String? = null
 )
 
@@ -214,6 +237,13 @@ private data class PortProbeResult(
     val status: CheckStatus,
     val latencyMs: Long? = null,
     val detail: String = "等待检测"
+)
+
+private data class NetworkSpeedResult(
+    val latencyMs: Long,
+    val jitterMs: Double,
+    val downloadMbps: Double,
+    val downloadedBytes: Long
 )
 
 private enum class PurityTone { CONSISTENT, NOTICE, NEUTRAL }
@@ -253,6 +283,15 @@ private fun isHttpsEndpoint(value: String): Boolean {
     if (value.isBlank()) return true
     val uri = runCatching { Uri.parse(value.trim()) }.getOrNull() ?: return false
     return uri.scheme.equals("https", ignoreCase = true) && !uri.host.isNullOrBlank()
+}
+
+private fun isIpLiteral(value: String): Boolean {
+    val normalized = value.trim().removePrefix("[").removeSuffix("]")
+    if (normalized.isBlank() || normalized.any { !(it.isDigit() || it in ".:") }) return false
+    return runCatching {
+        val address = InetAddress.getByName(normalized)
+        !address.hostAddress.isNullOrBlank()
+    }.getOrDefault(false)
 }
 
 private data class PublicGeoProbe(
@@ -353,6 +392,7 @@ private object SecureApiKeyStore {
     private const val LegacyIpApiComKey = "ipapi"
     private const val CustomKey = "custom"
     private const val CustomEndpoint = "custom_endpoint"
+    private const val IpHistoryKey = "ip_history"
 
     fun load(context: Context): ApiKeyConfig {
         val preferences = context.getSharedPreferences(PreferencesName, Context.MODE_PRIVATE)
@@ -378,6 +418,64 @@ private object SecureApiKeyStore {
             .putString(CustomKey, config.customKey.takeIf { it.isNotBlank() }?.let(::encrypt))
             .putString(CustomEndpoint, config.customEndpoint.takeIf { it.isNotBlank() }?.let(::encrypt))
             .apply()
+    }
+
+    fun loadIpHistory(context: Context): List<IpHistoryEntry> = runCatching {
+        val encrypted = context.getSharedPreferences(PreferencesName, Context.MODE_PRIVATE).getString(IpHistoryKey, null)
+        val array = JSONArray(decrypt(encrypted).orEmpty())
+        buildList {
+            for (index in 0 until array.length()) {
+                val item = array.optJSONObject(index) ?: continue
+                val ip = item.stringOrBlank("ip")
+                if (ip.isBlank()) continue
+                add(
+                    IpHistoryEntry(
+                        ip = ip,
+                        country = item.stringOrBlank("country"),
+                        city = item.stringOrBlank("city"),
+                        asn = item.stringOrBlank("asn"),
+                        networkType = item.stringOrBlank("networkType"),
+                        seenAt = item.stringOrBlank("seenAt"),
+                        source = item.stringOrBlank("source")
+                    )
+                )
+            }
+        }
+    }.getOrDefault(emptyList())
+
+    fun recordIpHistory(context: Context, snapshot: IpSnapshot, source: String): List<IpHistoryEntry> {
+        val entry = IpHistoryEntry(
+            ip = snapshot.ipv4,
+            country = snapshot.country,
+            city = snapshot.city,
+            asn = snapshot.asn,
+            networkType = snapshot.networkType,
+            seenAt = snapshot.refreshedAt,
+            source = source
+        )
+        val history = (listOf(entry) + loadIpHistory(context).filter { it.ip != entry.ip || it.source != entry.source })
+            .take(30)
+        val serialized = JSONArray().apply {
+            history.forEach { item ->
+                put(JSONObject().apply {
+                    put("ip", item.ip)
+                    put("country", item.country)
+                    put("city", item.city)
+                    put("asn", item.asn)
+                    put("networkType", item.networkType)
+                    put("seenAt", item.seenAt)
+                    put("source", item.source)
+                })
+            }
+        }
+        context.getSharedPreferences(PreferencesName, Context.MODE_PRIVATE).edit()
+            .putString(IpHistoryKey, encrypt(serialized.toString()))
+            .apply()
+        return history
+    }
+
+    fun clearIpHistory(context: Context) {
+        context.getSharedPreferences(PreferencesName, Context.MODE_PRIVATE).edit().remove(IpHistoryKey).apply()
     }
 
     fun clear(context: Context) {
@@ -449,7 +547,7 @@ private fun NetScopeApp() {
     var privacy by remember { mutableStateOf(NetworkRepository.inspectPrivacy(context)) }
     var endpoints by remember { mutableStateOf(DefaultEndpoints) }
     var testingAll by remember { mutableStateOf(false) }
-    var cloudflareLatency by remember { mutableStateOf<Long?>(null) }
+    var speedResult by remember { mutableStateOf<NetworkSpeedResult?>(null) }
     var speedTesting by remember { mutableStateOf(false) }
     var dnsHost by remember { mutableStateOf("example.com") }
     var dnsResult by remember { mutableStateOf<DnsLookupResult?>(null) }
@@ -463,6 +561,11 @@ private fun NetScopeApp() {
     var purityLoading by remember { mutableStateOf(false) }
     var purityError by remember { mutableStateOf<String?>(null) }
     var apiKeyConfig by remember { mutableStateOf(runCatching { SecureApiKeyStore.load(context) }.getOrDefault(ApiKeyConfig())) }
+    var ipHistory by remember { mutableStateOf(runCatching { SecureApiKeyStore.loadIpHistory(context) }.getOrDefault(emptyList())) }
+    var ipQuery by remember { mutableStateOf("") }
+    var queriedSnapshot by remember { mutableStateOf<IpSnapshot?>(null) }
+    var queryLoading by remember { mutableStateOf(false) }
+    var queryError by remember { mutableStateOf<String?>(null) }
     var showApiKeySettings by remember { mutableStateOf(false) }
 
     fun refreshIpInfo() {
@@ -473,6 +576,7 @@ private fun NetScopeApp() {
                 .onSuccess {
                     snapshot = it
                     privacy = NetworkRepository.inspectPrivacy(context)
+                    ipHistory = runCatching { SecureApiKeyStore.recordIpHistory(context, it, "当前出口") }.getOrDefault(ipHistory)
                 }
                 .onFailure { ipError = it.asUserMessage() }
             ipLoading = false
@@ -505,12 +609,60 @@ private fun NetScopeApp() {
     fun measureCloudflare() {
         scope.launch {
             speedTesting = true
-            val result = withContext(Dispatchers.IO) {
-                NetworkRepository.testEndpoint(DefaultEndpoints.first { it.name == "Cloudflare" })
-            }
-            cloudflareLatency = result.latencyMs
+            speedResult = null
+            speedResult = runCatching { withContext(Dispatchers.IO) { NetworkRepository.measureCloudflareSpeed() } }.getOrNull()
             speedTesting = false
         }
+    }
+
+    fun shareCurrentReport() {
+        val report = buildString {
+            appendLine("# NetScope 网络诊断摘要")
+            appendLine()
+            appendLine("生成时间：${LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))}")
+            snapshot?.let {
+                appendLine("当前 IPv4：${it.ipv4}")
+                appendLine("位置：${listOf(it.country, it.region, it.city).filter(String::isNotBlank).joinToString(" · ")}")
+                appendLine("ASN / 网络：${it.asn} · ${it.isp}")
+            }
+            appendLine("Android VPN：${if (privacy.vpnActive) "已连接" else "未检测到"}")
+            appendLine("Private DNS：${privacy.privateDnsMode}")
+            purityReport?.let { appendLine("公开风险主分：${formatRisk(it.score)} / 100；覆盖度：${formatRisk(it.coverage)}") }
+            speedResult?.let { appendLine("Cloudflare：延迟 ${it.latencyMs}ms；抖动 ${formatRisk(it.jitterMs)}ms；下载 ${formatRisk(it.downloadMbps)} Mbps") }
+            appendLine()
+            appendLine("说明：这是当前设备和当前网络的快照，不是欺诈概率、账号信誉或安全保证。")
+        }
+        context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, report)
+            putExtra(Intent.EXTRA_TITLE, "NetScope 网络诊断摘要")
+        }, "分享诊断摘要"))
+    }
+
+    fun lookupIp() {
+        val target = ipQuery.trim()
+        if (!isIpLiteral(target)) {
+            queryError = "请输入有效的 IPv4 或 IPv6 地址"
+            queriedSnapshot = null
+            return
+        }
+        scope.launch {
+            queryLoading = true
+            queryError = null
+            queriedSnapshot = null
+            runCatching { withContext(Dispatchers.IO) { NetworkRepository.lookupIpSnapshot(target) } }
+                .onSuccess {
+                    queriedSnapshot = it
+                    ipHistory = runCatching { SecureApiKeyStore.recordIpHistory(context, it, "手动查询") }.getOrDefault(ipHistory)
+                }
+                .onFailure { queryError = it.asUserMessage() }
+            queryLoading = false
+        }
+    }
+
+    fun clearIpHistory() {
+        runCatching { SecureApiKeyStore.clearIpHistory(context) }
+            .onSuccess { ipHistory = emptyList() }
     }
 
     fun runPurityDiagnosis() {
@@ -556,14 +708,14 @@ private fun NetScopeApp() {
     fun resolveDns() {
         val target = dnsHost.trim().removePrefix("https://").removePrefix("http://").substringBefore('/').trim()
         if (target.isBlank()) {
-            dnsResult = DnsLookupResult("", emptyList(), "请输入域名或主机名")
+            dnsResult = DnsLookupResult(host = "", addresses = emptyList(), error = "请输入域名或主机名")
             return
         }
         scope.launch {
             dnsLoading = true
             dnsResult = withContext(Dispatchers.IO) {
                 runCatching { NetworkRepository.resolveDns(target) }
-                    .getOrElse { DnsLookupResult(target, emptyList(), it.asUserMessage()) }
+                    .getOrElse { DnsLookupResult(host = target, addresses = emptyList(), error = it.asUserMessage()) }
             }
             dnsLoading = false
         }
@@ -634,6 +786,9 @@ private fun NetScopeApp() {
                     }
                 },
                 actions = {
+                    IconButton(onClick = { shareCurrentReport() }) {
+                        Icon(Icons.Outlined.Share, contentDescription = "分享诊断摘要", tint = Ink)
+                    }
                     IconButton(onClick = { refreshIpInfo() }, enabled = !ipLoading) {
                         if (ipLoading) {
                             CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = Blue)
@@ -671,6 +826,35 @@ private fun NetScopeApp() {
             }
             item {
                 Ipv6Card(snapshot?.ipv6, loading = ipLoading)
+            }
+            item {
+                SectionHeader(
+                    icon = Icons.Outlined.Search,
+                    title = "查询 IP",
+                    subtitle = "输入 IPv4 或 IPv6，查看地理、ASN 与网络信息"
+                )
+            }
+            item {
+                IpQueryCard(
+                    query = ipQuery,
+                    onQueryChange = { ipQuery = it },
+                    result = queriedSnapshot,
+                    loading = queryLoading,
+                    error = queryError,
+                    onLookup = { lookupIp() }
+                )
+            }
+            item {
+                SectionHeader(
+                    icon = Icons.Outlined.History,
+                    title = "IP 历史",
+                    subtitle = "仅加密保存在本机，最多保留最近 30 条",
+                    actionLabel = if (ipHistory.isEmpty()) null else "清除",
+                    onAction = if (ipHistory.isEmpty()) null else { { clearIpHistory() } }
+                )
+            }
+            item {
+                IpHistoryCard(history = ipHistory)
             }
             item {
                 SectionHeader(
@@ -715,11 +899,11 @@ private fun NetScopeApp() {
                 SectionHeader(
                     icon = Icons.Outlined.Speed,
                     title = "快速网络测量",
-                    subtitle = "不执行大流量上传或下载，避免意外消耗移动数据"
+                    subtitle = "手动触发的限量测速：延迟、抖动与最多 1 MB 下载"
                 )
             }
             item {
-                SpeedCard(latency = cloudflareLatency, loading = speedTesting, onMeasure = { measureCloudflare() })
+                SpeedCard(result = speedResult, loading = speedTesting, onMeasure = { measureCloudflare() })
             }
             item {
                 SectionHeader(
@@ -867,6 +1051,82 @@ private fun IpInfoCard(snapshot: IpSnapshot?, loading: Boolean, error: String?, 
             }
         } else {
             ErrorCard(error ?: "暂时无法读取公网 IP", onRetry)
+        }
+    }
+}
+
+@Composable
+private fun IpQueryCard(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    result: IpSnapshot?,
+    loading: Boolean,
+    error: String?,
+    onLookup: () -> Unit
+) {
+    Card(
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = CardSurface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            OutlinedTextField(
+                value = query,
+                onValueChange = onQueryChange,
+                label = { Text("IPv4 或 IPv6 地址") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(10.dp))
+            Button(onClick = onLookup, enabled = !loading, modifier = Modifier.fillMaxWidth()) {
+                if (loading) CircularProgressIndicator(modifier = Modifier.size(17.dp), color = CardSurface, strokeWidth = 2.dp)
+                else Icon(Icons.Outlined.Search, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(if (loading) "查询中…" else "查询此 IP")
+            }
+            if (error != null) {
+                Spacer(Modifier.height(10.dp))
+                Text(error, color = Red, fontSize = 12.sp)
+            }
+            if (result != null) {
+                Spacer(Modifier.height(14.dp))
+                HorizontalDivider(color = Border)
+                Spacer(Modifier.height(10.dp))
+                Text(result.ipv4, fontWeight = FontWeight.Bold, color = Ink, fontSize = 20.sp)
+                InfoLine(Icons.Outlined.LocationOn, "位置", listOf(result.country, result.region, result.city).filter { it.isNotBlank() && it != "—" }.joinToString(" · ").ifBlank { "—" })
+                InfoLine(Icons.Outlined.Business, "网络", result.isp.ifBlank { "—" })
+                InfoLine(Icons.Outlined.Router, "ASN", result.asn.ifBlank { "—" })
+                InfoLine(Icons.Outlined.Schedule, "时区", result.timezone.ifBlank { "—" })
+            }
+        }
+    }
+}
+
+@Composable
+private fun IpHistoryCard(history: List<IpHistoryEntry>) {
+    Card(
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = CardSurface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        if (history.isEmpty()) {
+            Text("尚无记录。刷新当前出口或完成一次 IP 查询后，结果会以加密形式仅保存在本机。", modifier = Modifier.padding(16.dp), color = MutedInk, fontSize = 12.sp, lineHeight = 18.sp)
+        } else {
+            Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                history.take(8).forEachIndexed { index, item ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(item.ip, color = Ink, fontWeight = FontWeight.Medium, fontSize = 14.sp)
+                            Text(listOf(item.source, listOf(item.country, item.city).filter { it.isNotBlank() }.joinToString(" · "), item.asn).filter { it.isNotBlank() }.joinToString(" · "), color = MutedInk, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        Text(item.seenAt, color = MutedInk, fontSize = 10.sp)
+                    }
+                    if (index < history.take(8).lastIndex) HorizontalDivider(color = Border)
+                }
+                if (history.size > 8) Text("另有 ${history.size - 8} 条加密历史记录", color = MutedInk, fontSize = 11.sp)
+            }
         }
     }
 }
@@ -1395,7 +1655,7 @@ private fun PrivacyCard(privacy: PrivacySnapshot, onRefresh: () -> Unit) {
 }
 
 @Composable
-private fun SpeedCard(latency: Long?, loading: Boolean, onMeasure: () -> Unit) {
+private fun SpeedCard(result: NetworkSpeedResult?, loading: Boolean, onMeasure: () -> Unit) {
     Card(
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = CardSurface),
@@ -1412,18 +1672,22 @@ private fun SpeedCard(latency: Long?, loading: Boolean, onMeasure: () -> Unit) {
                 }
                 Spacer(Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("边缘节点延迟", fontWeight = FontWeight.SemiBold, color = Ink)
-                    Text("目标：Cloudflare", fontSize = 12.sp, color = MutedInk)
+                    Text("快速网络测量", fontWeight = FontWeight.SemiBold, color = Ink)
+                    Text("Cloudflare Edge · 延迟、抖动与下载吞吐", fontSize = 12.sp, color = MutedInk)
                 }
-                Text(
-                    latency?.let { "${it}ms" } ?: "—",
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = if (latency == null) MutedInk else Green
-                )
             }
             Spacer(Modifier.height(14.dp))
-            Text("为避免消耗移动数据，此操作只进行一次轻量 HTTP 测量，不会执行下载或上传测速。", fontSize = 12.sp, color = MutedInk, lineHeight = 18.sp)
+            if (result == null) {
+                Text("开始后会执行 5 次轻量延迟采样与最多 1 MB 下载测量；不会上传数据，不会自动运行。", fontSize = 12.sp, color = MutedInk, lineHeight = 18.sp)
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    SpeedMetric("延迟", "${result.latencyMs}ms", Modifier.weight(1f))
+                    SpeedMetric("抖动", "${formatRisk(result.jitterMs)}ms", Modifier.weight(1f))
+                    SpeedMetric("下载", "${formatRisk(result.downloadMbps)} Mbps", Modifier.weight(1.3f))
+                }
+                Spacer(Modifier.height(8.dp))
+                Text("本次下载 ${result.downloadedBytes / 1024} KB；结果受 Wi‑Fi/蜂窝、CDN 路由和后台流量影响，仅供参考。", fontSize = 10.sp, color = MutedInk, lineHeight = 15.sp)
+            }
             Spacer(Modifier.height(13.dp))
             Button(
                 onClick = onMeasure,
@@ -1438,10 +1702,18 @@ private fun SpeedCard(latency: Long?, loading: Boolean, onMeasure: () -> Unit) {
                 } else {
                     Icon(Icons.Outlined.Speed, contentDescription = null, modifier = Modifier.size(17.dp))
                     Spacer(Modifier.width(7.dp))
-                    Text("测量延迟")
+                    Text(if (result == null) "开始测量" else "重新测量")
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SpeedMetric(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(modifier = modifier.clip(RoundedCornerShape(10.dp)).background(SoftBlue).padding(9.dp)) {
+        Text(label, fontSize = 10.sp, color = MutedInk)
+        Text(value, fontSize = 13.sp, color = Ink, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -1488,9 +1760,26 @@ private fun DnsLookupCard(
                 if (it.error != null) {
                     ResultMessage(it.error, Red)
                 } else {
-                    Text("${it.host} 的解析结果", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = Ink)
+                    Text("${it.host} 的系统解析", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = Ink)
                     Spacer(Modifier.height(5.dp))
-                    Text(it.addresses.joinToString("\n"), fontSize = 12.sp, color = MutedInk, lineHeight = 18.sp)
+                    Text(it.addresses.joinToString("\n").ifBlank { "系统未返回 A / AAAA 地址" }, fontSize = 12.sp, color = MutedInk, lineHeight = 18.sp)
+                    if (it.resolverResults.isNotEmpty()) {
+                        Spacer(Modifier.height(12.dp))
+                        Text("公共 DNS 交叉核验", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = Ink)
+                        Spacer(Modifier.height(6.dp))
+                        it.resolverResults.forEachIndexed { index, resolver ->
+                            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(resolver.resolver, color = Ink, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                                    Text(resolver.error ?: resolver.addresses.joinToString(" · ").ifBlank { "无 A / AAAA 记录" }, color = if (resolver.error == null) MutedInk else Red, fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                }
+                                StatusBadge(resolver.status, if (resolver.error == null) Green else Red, if (resolver.error == null) SoftGreen else Color(0xFFFFECEC))
+                            }
+                            if (index < it.resolverResults.lastIndex) Spacer(Modifier.height(7.dp))
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        Text("提示：不同解析器返回的地址差异可能来自 CDN、地域策略或 DNS 安全策略；这不是浏览器 DNS 泄漏结论。", color = MutedInk, fontSize = 10.sp, lineHeight = 15.sp)
+                    }
                 }
             }
         }
@@ -1613,15 +1902,31 @@ private fun BrowserFallbackCard(context: Context) {
             Spacer(Modifier.height(8.dp))
             Text("原生 Android 已完成 DNS、Whois、服务状态和设备网络信息；不会伪造浏览器指纹或 WebRTC 测试结论。", fontSize = 12.sp, color = MutedInk, lineHeight = 18.sp)
             Spacer(Modifier.height(10.dp))
-            OutlinedButton(onClick = {
-                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://browserleaks.com")))
-            }) {
-                Icon(Icons.Outlined.ArrowOutward, contentDescription = null, modifier = Modifier.size(17.dp))
-                Spacer(Modifier.width(7.dp))
-                Text("打开 BrowserLeaks 自检")
-            }
+            BrowserToolLink(context, "BrowserLeaks 自检", "浏览器指纹、WebRTC、Canvas/WebGL 与 TLS/DNS 相关自检", "https://browserleaks.com")
+            Spacer(Modifier.height(7.dp))
+            BrowserToolLink(context, "IPCheck WebRTC Leak", "网页 WebRTC 候选地址、NAT 和 SDP 日志", "https://ipcheck.ing/#webrtc")
+            Spacer(Modifier.height(7.dp))
+            BrowserToolLink(context, "IPCheck DNS Leak", "浏览器多端点 DNS 泄漏测试", "https://ipcheck.ing/#dns-leak")
+            Spacer(Modifier.height(7.dp))
+            BrowserToolLink(context, "IPCheck 高级工具", "全球延迟、MTR、代理规则、审查、Persona 等需要网页或远端探针的工具", "https://ipcheck.ing")
             Spacer(Modifier.height(8.dp))
-            Text("EdgeOne MyIP 本次无法解析，NSTool 未公开可审计 IP API；二者不会被自动请求、不会进入评分，也不会下载任何外部 APK。", fontSize = 11.sp, color = MutedInk, lineHeight = 16.sp)
+            Text("这些页面在浏览器运行，不会把网页结果静默写回 APP 或混入纯净度评分。EdgeOne MyIP 当前无法解析，NSTool 未公开可审计 IP API，二者仍不会被自动请求或下载 APK。", fontSize = 11.sp, color = MutedInk, lineHeight = 16.sp)
+        }
+    }
+}
+
+@Composable
+private fun BrowserToolLink(context: Context, title: String, detail: String, url: String) {
+    OutlinedButton(
+        onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) },
+        modifier = Modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+    ) {
+        Icon(Icons.Outlined.ArrowOutward, contentDescription = null, modifier = Modifier.size(17.dp), tint = Blue)
+        Spacer(Modifier.width(8.dp))
+        Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.Start) {
+            Text(title, color = Ink, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+            Text(detail, color = MutedInk, fontSize = 10.sp, lineHeight = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -1720,6 +2025,24 @@ private object NetworkRepository {
         )
     }
 
+    suspend fun lookupIpSnapshot(ip: String): IpSnapshot = withContext(Dispatchers.IO) {
+        val normalized = ip.trim().removePrefix("[").removeSuffix("]")
+        val geo = JSONObject(getText("https://ipapi.co/${URLEncoder.encode(normalized, Charsets.UTF_8.name())}/json/"))
+        if (geo.stringOrBlank("error").isNotBlank()) throw IllegalStateException(geo.stringOrBlank("reason").ifBlank { "此 IP 暂无可用地理信息" })
+        IpSnapshot(
+            ipv4 = normalized,
+            ipv6 = normalized.takeIf { it.contains(":") },
+            country = geo.stringOrBlank("country_name"),
+            region = geo.stringOrBlank("region"),
+            city = geo.stringOrBlank("city"),
+            timezone = geo.stringOrBlank("timezone"),
+            isp = geo.stringOrBlank("org"),
+            asn = geo.stringOrBlank("asn"),
+            networkType = geo.stringOrBlank("version").ifBlank { if (normalized.contains(":")) "IPv6" else "IPv4" },
+            refreshedAt = LocalDateTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"))
+        )
+    }
+
     suspend fun testEndpoint(endpoint: EndpointResult): EndpointResult = withContext(Dispatchers.IO) {
         val started = System.nanoTime()
         try {
@@ -1743,13 +2066,81 @@ private object NetworkRepository {
         }
     }
 
+    fun measureCloudflareSpeed(): NetworkSpeedResult {
+        val latencyUrl = "https://speed.cloudflare.com/__down?bytes=0"
+        val latencySamples = (1..5).map {
+            val started = System.nanoTime()
+            getText(latencyUrl)
+            (System.nanoTime() - started) / 1_000_000
+        }
+        val latency = latencySamples.sorted()[latencySamples.size / 2]
+        val jitter = latencySamples.zipWithNext { first, second -> abs(first - second).toDouble() }.average().takeIf { !it.isNaN() } ?: 0.0
+        val maxBytes = 1_000_000L
+        val connection = (URL("https://speed.cloudflare.com/__down?bytes=$maxBytes&cb=${System.currentTimeMillis()}").openConnection() as HttpURLConnection).apply {
+            connectTimeout = 10_000
+            readTimeout = 15_000
+            requestMethod = "GET"
+            setRequestProperty("User-Agent", "NetScope Android/1.0")
+        }
+        val started = System.nanoTime()
+        val bytes = try {
+            if (connection.responseCode !in 200..299) throw IllegalStateException("测速服务返回 HTTP ${connection.responseCode}")
+            connection.inputStream.use { input ->
+                val buffer = ByteArray(16 * 1024)
+                var total = 0L
+                while (total < maxBytes) {
+                    val read = input.read(buffer, 0, minOf(buffer.size.toLong(), maxBytes - total).toInt())
+                    if (read < 0) break
+                    total += read
+                }
+                total
+            }
+        } finally {
+            connection.disconnect()
+        }
+        val elapsedSeconds = ((System.nanoTime() - started) / 1_000_000_000.0).coerceAtLeast(0.001)
+        return NetworkSpeedResult(latency, jitter, (bytes * 8.0 / 1_000_000.0) / elapsedSeconds, bytes)
+    }
+
     fun resolveDns(host: String): DnsLookupResult {
         val addresses = InetAddress.getAllByName(host)
             .mapNotNull { it.hostAddress }
             .distinct()
             .sortedWith(compareBy<String> { if (it.contains(":")) 1 else 0 }.thenBy { it })
-        if (addresses.isEmpty()) throw IllegalStateException("未获得可用 DNS 地址")
-        return DnsLookupResult(host = host, addresses = addresses)
+        val resolvers = listOf(
+            "Cloudflare" to "https://cloudflare-dns.com/dns-query",
+            "Google Public DNS" to "https://dns.google/resolve",
+            "Quad9" to "https://dns.quad9.net/dns-query"
+        )
+        val remoteResults = resolvers.map { (name, endpoint) ->
+            runCatching { resolveDnsOverHttps(name, endpoint, host) }
+                .getOrElse { error -> DnsResolverResult(name, emptyList(), "错误", error.asUserMessage()) }
+        }
+        if (addresses.isEmpty() && remoteResults.all { it.addresses.isEmpty() }) throw IllegalStateException("未获得可用 DNS 地址")
+        return DnsLookupResult(host = host, addresses = addresses, resolverResults = remoteResults)
+    }
+
+    private fun resolveDnsOverHttps(name: String, endpoint: String, host: String): DnsResolverResult {
+        val encodedHost = URLEncoder.encode(host, Charsets.UTF_8.name()).replace("+", "%20")
+        val separator = if (endpoint.contains("?")) "&" else "?"
+        val json = JSONObject(getText("$endpoint${separator}name=$encodedHost&type=A", mapOf("Accept" to "application/dns-json")))
+        val statusCode = json.intOrNull("Status")
+        val answers = json.optJSONArray("Answer")
+        val addresses = buildList {
+            if (answers != null) {
+                for (index in 0 until answers.length()) {
+                    val answer = answers.optJSONObject(index) ?: continue
+                    if (answer.intOrNull("type") !in setOf(1, 28)) continue
+                    answer.stringOrBlank("data").trimEnd('.').takeIf { it.isNotBlank() }?.let(::add)
+                }
+            }
+        }.distinct()
+        return DnsResolverResult(
+            resolver = name,
+            addresses = addresses,
+            status = if (statusCode == 0) "正常" else "DNS $statusCode",
+            error = if (statusCode == null) "未返回 DNS 状态" else null
+        )
     }
 
     fun lookupWhois(query: String): WhoisLookupResult {

@@ -1,33 +1,37 @@
 # NetScope Android
 
-NetScope 是一个使用 **Kotlin + Jetpack Compose + Material 3** 编写的 Android 原生 IP 工具箱。它以 MyIP / IPCheck.ing 的公开信息架构为视觉与功能参考，但使用独立名称、独立界面实现和公开网络端点；本项目**不是官方客户端，也不隶属于 MyIP 或 IPCheck.ing**。
+NetScope 是一个以 **Kotlin、Jetpack Compose 与 Material 3** 编写的 Android 原生 IP 工具箱。它参考 [MyIP](https://github.com/jason5ng32/MyIP) 和 [IPCheck.ing](https://ipcheck.ing) 的公开信息架构与工具分类，但使用独立名称、独立 Android 界面和公开网络端点；本项目**不是官方客户端，也不隶属于 MyIP 或 IPCheck.ing**。
 
-## 已实现能力
+## 首批复刻能力
 
-| 模块 | 功能 |
+| 模块 | 当前 Android 原生实现 |
 | --- | --- |
-| IP 信息 | 查询公网 IPv4、IPv6（如可用）、国家/地区/城市、时区、ISP 与 ASN；可一键复制 IPv4。 |
+| 当前 IP 信息 | 查询公网 IPv4、可用 IPv6、国家/地区/城市、时区、ISP 与 ASN；支持复制 IPv4。 |
+| 查询 IP | 输入任何 IPv4 或 IPv6，查询其位置、时区、ISP、ASN 与 IP 版本；查询结果自动进入本地历史。 |
+| IP 历史 | 最多保存最近 30 条当前出口或手动查询记录；数据通过 Android Keystore AES-GCM 加密，仅保存在当前设备，支持清除。 |
 | 连通性 | 并行检测 Google、GitHub、Cloudflare、ChatGPT、YouTube、Wikipedia，显示状态和端到端 HTTP 延迟；支持单项重试和全部刷新。 |
-| Android 隐私诊断 | 显示系统 VPN 连接、Private DNS 工作模式与当前系统 DNS。应用明确说明 WebRTC 浏览器测试无法被原生 API 等价替代。 |
-| 增强纯净度诊断 | 多源出口、地理、双栈位置、公开 ASN / 组织属性，以及公开 Proxy / VPN / Tor / 托管 / 攻击风险信号的 0–100 独立评分；可选接入用户设备本地保存的 AbuseIPDB 与 ipapi.is Key。 |
-| 轻量延迟 | 对 Cloudflare 发起一次轻量 HTTP 请求；不会触发大流量上传或下载。 |
-| DNS 解析 | 通过 Android 系统解析器直接查询域名的 IPv4 / IPv6 地址。 |
-| Whois 查询 | 连接公开 Whois 注册表查询域名或 IP 注册信息。 |
-| 服务状态 | 从当前网络探测常用 HTTPS 服务的 443 端口可达性与连接耗时。 |
-| 设备环境 | 显示 Android 版本、语言与应用标识等原生环境信息。 |
-| 浏览器备用入口 | 仅在需要 WebRTC、JavaScript 指纹或真实多地区探针时打开 IPCheck.ing。 |
+| 快速网络测量 | 用户手动触发后，对 Cloudflare Edge 执行 5 次轻量延迟采样和最多 **1 MB** 下载，展示中位延迟、抖动和下载吞吐；不上传数据、不自动运行。 |
+| DNS 解析 | 对域名执行 Android 系统解析，并使用 Cloudflare、Google Public DNS、Quad9 的 DNS over HTTPS 结果交叉核验；不把地址差异伪装为浏览器 DNS 泄漏。 |
+| Whois | 连接公开 Whois 注册表查询域名或 IP 注册信息。 |
+| 服务状态 | 从当前网络探测常用 HTTPS 服务的 443 端口可达性与连接耗时。它不是官方状态页/事故聚合。 |
+| Android 隐私 | 显示系统 VPN 连接、Private DNS 模式和系统 DNS 服务器。 |
+| 增强纯净度诊断 | 使用公开行为风险证据生成独立主分，并将代理、VPN、Tor、IDC、ASN、覆盖度分开解释。它不是第三方专有分数或欺诈概率。 |
+| 摘要分享 | 通过 Android 系统分享面板输出当前网络诊断的 Markdown 兼容纯文本摘要；不上传、不生成公开链接。 |
+| 网页专属工具 | 提供 BrowserLeaks、IPCheck WebRTC Leak、DNS Leak 和高级工具入口；网页结果不会静默写回 APP 或参与纯净度评分。 |
 
-## 纯净度诊断边界
+## 纯净度与授权数据源
 
-本模块参考 Ping0 公开的风险、IP 类型、原生性与共享稳定性等概念，但不使用或伪称其专有人工 IP 段标注、Ping0 自有恶意行为信誉、共享人数、BGP / ASN / 企业历史或注册地历史。模块通过公开风险源补充 Proxy / VPN / Tor / 托管 / 攻击提示，并以独立规则形成分数；用户可点击顶部地球图标右侧的钥匙图标，选填 AbuseIPDB API Key、ipapi.is API Key，或成对保存自定义 HTTPS 请求地址与 Key。ipapi.is 使用官方 JSON POST 请求以避免 Key 出现在 URL。全部配置通过 Android Keystore 的 AES-GCM 密钥加密保存在本机；自定义地址与 Key 当前只保存、不联网、不参与评分。未配置、超时或接口失败不扣分。该分数仅反映本次检测时的公开出口一致性与风险属性，不可作为账号、支付、广告或合规决策的唯一依据。具体规则见仓库根目录 [`purity_module_spec.md`](../purity_module_spec.md)。
+主分采用 MyIPCheck 独立的 v3.1 公开网络出口风险信号模型，而不是 Ping0、MyIP、IPCheck.ing 或任何服务商的原始结论。主分只接受已观察到的公开行为证据；Tor、代理、VPN、中继、托管、IDC、ASN、CIDR 和地理属性只能用于网络透明度或上下文展示。没有独立、时间外真实标签校准前，分数不能解释为发生概率。
 
-## 界面设计
+授权设置统一管理数据源。留空时，APP 仍默认使用 `ipify`、`ipapi.co`、`ipwho.is`、ProxyCheck、Tor Project 及上述公共 DNS 解析器。用户可选填 AbuseIPDB、ipapi.is、MaxMind GeoIP Insights 和 IPHub 的凭据来增加覆盖度；它们的官方接口需要有效授权，空 Key 时不会被调用。每个 Key 与 MaxMind Account ID 均可用小眼睛单独显示/隐藏，且全部用 Android Keystore AES-GCM 本地加密。
 
-设计保留原站“冷白页面 + 白色信息卡片 + 语义状态色”的信息层级，但针对手机纵向单列使用做了原生优化。蓝色代表信息/等待，绿色代表可达，琥珀色代表提示，红色代表失败；所有状态均有文本和图标，避免仅依赖颜色。
+## 已知边界
+
+WebRTC 候选地址、浏览器 Canvas/WebGL/JavaScript 指纹、完整 DNS Leak、PWA、键盘快捷键和网页 Persona Check 需要浏览器运行环境，不能由原生 Android API 等价复刻。Globalping 全球延迟/MTR、OONI 审查检查、可分享的过期链接、Earth Online 与官方服务事故聚合还需要远端探针或后端服务，尚不在 APP 内伪装实现。
 
 ## 构建与安装
 
-项目要求 Android Studio Ladybug 或更高版本，JDK 17 和 Android SDK 35。首次打开后让 IDE 完成 Gradle 同步，然后运行 `app` 配置；或在终端执行：
+项目要求 Android Studio Ladybug 或更高版本、JDK 17 和 Android SDK 35。首次打开后让 IDE 完成 Gradle 同步，然后运行 `app` 配置；或执行：
 
 ```bash
 export JAVA_HOME=/path/to/jdk-17
@@ -35,21 +39,26 @@ export ANDROID_HOME=/path/to/android-sdk
 ./gradlew :app:assembleDebug
 ```
 
-生成的 APK 位于：
+调试 APK 位于：
 
 ```text
 app/build/outputs/apk/debug/app-debug.apk
 ```
 
-在已允许“安装未知来源应用”的 Android 设备上，将该 APK 传到手机并点击安装即可。该 debug 包只适合内测与演示，发布到应用商店前应使用自己的签名密钥生成 release 包。
+在已允许“安装未知来源应用”的 Android 设备上，将 APK 传到手机并安装即可。debug 包仅适合内测；仓库的 GitHub Release 工作流会使用维护者的固定签名密钥生成 release APK。
 
 ## 网络与隐私
 
-应用访问 `api.ipify.org` 获取公网 IP，访问 `ipapi.co` 与 `ipwho.is` 查询 IP 地理属性；增强纯净度诊断会按需向 `proxycheck.io` 查询当前公网 IP 的少量风险结论，并请求 Tor Project 的当前出口状态；仅在用户配置 Key 后才向 AbuseIPDB 与 ipapi.is 发送当前公网 IP。连通性与服务状态检测会对所列服务发起少量 HTTPS 或 TCP 连接，DNS 查询使用系统解析器，Whois 查询连接公开注册表。应用不读取账号、Cookie、浏览记录或设备指纹，也不持久化保存用户 IP 与检测历史；数据仅保留在当前应用内存中。第三方服务可能依其隐私政策记录请求，信息也可能不准确或不可用。
+网络请求会向相关的 IP、地理、风险、DNS、测速、Whois 或端口目标发送当前请求所需的最少信息。IP 历史与用户授权凭据仅加密保存在本机，云备份/设备迁移均被禁用。APP 不读取账号、Cookie、浏览历史、通讯录、位置或浏览器指纹。第三方服务可能按各自隐私政策记录请求，返回结果也可能不准确、过时或不可用。
 
 ## 参考来源
 
-功能分类和信息架构参考 MyIP 的公开开源项目与 IPCheck.ing 官网。[1] [2]
+[1] [jason5ng32/MyIP](https://github.com/jason5ng32/MyIP)
 
-[1]: https://github.com/jason5ng32/MyIP "jason5ng32/MyIP"
-[2]: https://ipcheck.ing/ "IPCheck.ing"
+[2] [IPCheck.ing](https://ipcheck.ing/)
+
+[3] [Cloudflare Speedtest](https://github.com/cloudflare/speedtest)
+
+[4] [Globalping API](https://globalping.io/docs/api.globalping.io)
+
+[5] [OONI data/API documentation](https://docs.ooni.org/data)

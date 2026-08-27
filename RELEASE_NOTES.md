@@ -1,3 +1,18 @@
+## v1.0.17：首批 Android 原生工具复刻
+
+本版本开始复刻 MyIP / IPCheck.ing 中适合 Android 原生实现的工具能力，同时明确保留浏览器和全球探针功能的边界。
+
+| 新增或升级 | 实现范围 |
+|---|---|
+| 查询 IP | 支持输入 IPv4 / IPv6 查询位置、时区、ISP、ASN 和 IP 版本。 |
+| 加密 IP 历史 | 当前出口与手动查询最多保存 30 条，使用 Android Keystore AES-GCM 本地加密，支持一键清除。 |
+| 多解析器 DNS | 同时显示 Android 系统解析及 Cloudflare、Google Public DNS、Quad9 的 DNS over HTTPS 交叉结果。 |
+| 限量测速 | 用户手动开始后测量 Cloudflare Edge 的中位延迟、抖动和最多 1 MB 下载吞吐；不上传数据、不会自动运行。 |
+| 分享摘要 | 使用 Android 系统分享面板导出当前网络、风险和测速信息的 Markdown 兼容纯文本；不上传、不创建公开链接。 |
+| 网页工具入口 | 增加 BrowserLeaks、IPCheck WebRTC Leak、DNS Leak 和高级工具入口；网页数据不回写 APP，亦不参与纯净度评分。 |
+
+> 完整 WebRTC/浏览器指纹、DNS Leak、Globalping 全球延迟/MTR、OONI 审查检查、可过期的公开报告和 Earth Online 需要浏览器环境、远端探针或后端服务，尚未伪装为 APP 内置结果。
+
 ## v1.0.13：统一服务商授权与默认公共检测回退
 
 本次修订将“授权数据源 Key”调整为统一的服务商管理界面。未填写任何 Key 时，APP 明确显示并自动使用 **ipify、ipapi.co、ipwho.is、ProxyCheck 和 Tor Project** 等可公开访问的默认检测源；填写可选服务商凭据后，才在本机按需叠加相应结果。
