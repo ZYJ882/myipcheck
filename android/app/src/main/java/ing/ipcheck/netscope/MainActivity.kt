@@ -81,6 +81,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -209,7 +210,14 @@ private data class EndpointResult(
 private data class PrivacySnapshot(
     val vpnActive: Boolean,
     val privateDnsMode: String,
-    val dnsServers: List<String>
+    val dnsServers: List<String>,
+    val transport: String,
+    val validated: Boolean,
+    val metered: Boolean,
+    val interfaceName: String,
+    val privateDnsHostname: String,
+    val downstreamKbps: Int,
+    val upstreamKbps: Int
 )
 
 private data class DnsResolverResult(
@@ -225,6 +233,13 @@ private data class DnsLookupResult(
     val addresses: List<String>,
     val resolverResults: List<DnsResolverResult> = emptyList(),
     val error: String? = null
+)
+
+private data class DnsConsensus(
+    val label: String,
+    val detail: String,
+    val color: Color,
+    val background: Color
 )
 
 private data class WhoisLookupResult(
@@ -366,6 +381,12 @@ private fun isIpLiteral(value: String): Boolean {
     }.getOrDefault(false)
 }
 
+private fun isValidProbeHost(value: String): Boolean {
+    val host = value.trim().removePrefix("[").removeSuffix("]")
+    if (host.isBlank() || host.length > 253 || host.any { it.isWhitespace() || it == '/' || it == '@' }) return false
+    return isIpLiteral(host) || host.matches(Regex("^[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$"))
+}
+
 private data class PublicGeoProbe(
     val source: String,
     val ip: String,
@@ -466,6 +487,7 @@ private object SecureApiKeyStore {
     private const val CustomEndpoint = "custom_endpoint"
     private const val IpHistoryKey = "ip_history"
     private const val ConnectivityEndpointsKey = "connectivity_endpoints"
+    private const val PortProbeTargetsKey = "port_probe_targets"
 
     fun load(context: Context): ApiKeyConfig {
         val preferences = context.getSharedPreferences(PreferencesName, Context.MODE_PRIVATE)
@@ -587,6 +609,33 @@ private object SecureApiKeyStore {
         context.getSharedPreferences(PreferencesName, Context.MODE_PRIVATE).edit().remove(ConnectivityEndpointsKey).apply()
     }
 
+    fun loadPortProbeTargets(context: Context): List<PortProbeResult> = runCatching {
+        val encrypted = context.getSharedPreferences(PreferencesName, Context.MODE_PRIVATE).getString(PortProbeTargetsKey, null)
+        val array = JSONArray(decrypt(encrypted).orEmpty())
+        buildList {
+            for (index in 0 until array.length()) {
+                val item = array.optJSONObject(index) ?: continue
+                val host = item.stringOrBlank("host")
+                val port = item.intOrNull("port") ?: -1
+                if (isValidProbeHost(host) && port in 1..65535) add(PortProbeResult(host, port, CheckStatus.IDLE))
+            }
+        }.distinctBy { "${it.host.lowercase()}:${it.port}" }.take(12)
+    }.getOrDefault(emptyList())
+
+    fun savePortProbeTargets(context: Context, probes: List<PortProbeResult>) {
+        val sanitized = probes.take(12).map { it.copy(status = CheckStatus.IDLE, latencyMs = null, detail = "等待探测") }
+        val array = JSONArray().apply {
+            sanitized.forEach { probe -> put(JSONObject().put("host", probe.host).put("port", probe.port)) }
+        }
+        context.getSharedPreferences(PreferencesName, Context.MODE_PRIVATE).edit()
+            .putString(PortProbeTargetsKey, encrypt(array.toString()))
+            .apply()
+    }
+
+    fun clearPortProbeTargets(context: Context) {
+        context.getSharedPreferences(PreferencesName, Context.MODE_PRIVATE).edit().remove(PortProbeTargetsKey).apply()
+    }
+
     fun clear(context: Context) {
         context.getSharedPreferences(PreferencesName, Context.MODE_PRIVATE).edit().clear().apply()
     }
@@ -648,7 +697,8 @@ private val DefaultPortProbes = listOf(
 private val DefaultOfficialStatuses = listOf(
     OfficialStatusResult("GitHub", "https://www.githubstatus.com/api/v2/status.json", "https://www.githubstatus.com"),
     OfficialStatusResult("Cloudflare", "https://www.cloudflarestatus.com/api/v2/status.json", "https://www.cloudflarestatus.com"),
-    OfficialStatusResult("OpenAI", "https://status.openai.com/api/v2/status.json", "https://status.openai.com")
+    OfficialStatusResult("OpenAI", "https://status.openai.com/api/v2/status.json", "https://status.openai.com"),
+    OfficialStatusResult("Discord", "https://discordstatus.com/api/v2/status.json", "https://discordstatus.com")
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -685,8 +735,9 @@ private fun NetScopeApp() {
     var ooniCountry by remember { mutableStateOf("US") }
     var ooniResult by remember { mutableStateOf<OoniQueryResult?>(null) }
     var ooniLoading by remember { mutableStateOf(false) }
-    var portProbes by remember { mutableStateOf(DefaultPortProbes) }
+    var portProbes by remember { mutableStateOf(SecureApiKeyStore.loadPortProbeTargets(context).ifEmpty { DefaultPortProbes }) }
     var portsLoading by remember { mutableStateOf(false) }
+    var showPortProbeSettings by remember { mutableStateOf(false) }
     var officialStatuses by remember { mutableStateOf(DefaultOfficialStatuses) }
     var officialStatusLoading by remember { mutableStateOf(false) }
     var purityReport by remember { mutableStateOf<PurityReport?>(null) }
@@ -869,6 +920,27 @@ private fun NetScopeApp() {
         }
     }
 
+    fun shareDnsResult(result: DnsLookupResult) {
+        val report = buildString {
+            appendLine("# NetScope DNS 查询")
+            appendLine()
+            appendLine("时间：${LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))}")
+            appendLine("主机：${result.host}")
+            appendLine("记录类型：${result.recordType}")
+            val consensus = analyzeDnsConsensus(result)
+            appendLine("对比结论：${consensus.label} — ${consensus.detail}")
+            appendLine("系统解析：${result.addresses.joinToString(" · ").ifBlank { "未返回或该类型不适用" }}")
+            result.resolverResults.forEach { resolver -> appendLine("${resolver.resolver}：${resolver.error ?: resolver.addresses.joinToString(" · ").ifBlank { "无记录" }}") }
+            appendLine()
+            appendLine("说明：DNS 差异可能来自 CDN、地域调度、缓存或安全策略，不能单独作为 DNS 泄漏结论。")
+        }
+        context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, report)
+            putExtra(Intent.EXTRA_TITLE, "NetScope DNS 查询")
+        }, "分享 DNS 查询"))
+    }
+
     fun lookupWhois() {
         val target = whoisQuery.trim()
         if (target.isBlank()) {
@@ -963,6 +1035,17 @@ private fun NetScopeApp() {
             }
             officialStatusLoading = false
         }
+    }
+
+    fun savePortProbeTargets(updated: List<PortProbeResult>) {
+        val cleaned = updated.take(12).map { it.copy(status = CheckStatus.IDLE, latencyMs = null, detail = "等待探测") }
+        runCatching { SecureApiKeyStore.savePortProbeTargets(context, cleaned) }
+            .onSuccess { portProbes = cleaned; showPortProbeSettings = false }
+    }
+
+    fun resetPortProbeTargets() {
+        runCatching { SecureApiKeyStore.clearPortProbeTargets(context) }
+            .onSuccess { portProbes = DefaultPortProbes; showPortProbeSettings = false }
     }
 
     fun runPortProbes() {
@@ -1149,7 +1232,8 @@ private fun NetScopeApp() {
                 recordType = dnsRecordType,
                 onHostChange = { dnsHost = it },
                 onRecordTypeChange = { dnsRecordType = it },
-                onLookup = { resolveDns() }
+                onLookup = { resolveDns() },
+                onShare = { dnsResult?.takeIf { it.error == null }?.let { shareDnsResult(it) } }
                 )
             }
             item {
@@ -1213,7 +1297,8 @@ private fun NetScopeApp() {
                     loading = portsLoading,
                     officialLoading = officialStatusLoading,
                     onProbe = { runPortProbes() },
-                    onRefreshOfficial = { refreshOfficialStatuses() }
+                    onRefreshOfficial = { refreshOfficialStatuses() },
+                    onManageProbes = { showPortProbeSettings = true }
                 )
             }
             item {
@@ -1226,6 +1311,15 @@ private fun NetScopeApp() {
                 Footer()
             }
         }
+    }
+
+    if (showPortProbeSettings) {
+        PortProbeSettingsDialog(
+            savedProbes = portProbes,
+            onDismiss = { showPortProbeSettings = false },
+            onSave = { savePortProbeTargets(it) },
+            onReset = { resetPortProbeTargets() }
+        )
     }
 
     if (showConnectivitySettings) {
@@ -1245,6 +1339,65 @@ private fun NetScopeApp() {
             onClear = { clearApiKeys() }
         )
     }
+}
+
+@Composable
+private fun PortProbeSettingsDialog(
+    savedProbes: List<PortProbeResult>,
+    onDismiss: () -> Unit,
+    onSave: (List<PortProbeResult>) -> Unit,
+    onReset: () -> Unit
+) {
+    var draft by remember(savedProbes) { mutableStateOf(savedProbes) }
+    var host by remember { mutableStateOf("") }
+    var port by remember { mutableStateOf("443") }
+    var error by remember { mutableStateOf<String?>(null) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("端口探测目标") },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                Text("每项仅探测一个主机和一个端口；最多 12 项。不会扫描端口范围，清单以加密形式仅保存在当前设备。", color = MutedInk, fontSize = 12.sp, lineHeight = 18.sp)
+                Spacer(Modifier.height(12.dp))
+                draft.forEachIndexed { index, probe ->
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(vertical = 5.dp)) {
+                        Text("${probe.host}:${probe.port}", modifier = Modifier.weight(1f), fontSize = 13.sp, fontWeight = FontWeight.Medium, color = Ink)
+                        IconButton(onClick = { draft = draft.filterIndexed { current, _ -> current != index } }) {
+                            Icon(Icons.Outlined.DeleteOutline, contentDescription = "删除 ${probe.host}:${probe.port}", tint = Red)
+                        }
+                    }
+                }
+                HorizontalDivider(color = Border)
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(value = host, onValueChange = { host = it }, label = { Text("主机名或 IP 地址") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(value = port, onValueChange = { port = it.filter(Char::isDigit) }, label = { Text("端口（1–65535）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                if (error != null) Text(error.orEmpty(), color = Red, fontSize = 11.sp, modifier = Modifier.padding(top = 6.dp))
+                Spacer(Modifier.height(8.dp))
+                OutlinedButton(onClick = {
+                    val normalizedHost = host.trim().removePrefix("[").removeSuffix("]")
+                    val normalizedPort = port.toIntOrNull()
+                    error = when {
+                        draft.size >= 12 -> "最多保存 12 个探测目标"
+                        !isValidProbeHost(normalizedHost) -> "请输入有效单个主机名或 IP 地址"
+                        normalizedPort !in 1..65535 -> "端口必须在 1 到 65535 之间"
+                        draft.any { it.host.equals(normalizedHost, true) && it.port == normalizedPort } -> "该主机和端口已存在"
+                        else -> null
+                    }
+                    if (error == null) {
+                        draft = draft + PortProbeResult(normalizedHost, normalizedPort!!, CheckStatus.IDLE)
+                        host = ""
+                        port = "443"
+                    }
+                }, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(17.dp))
+                    Spacer(Modifier.width(7.dp)); Text("添加单端口目标")
+                }
+            }
+        },
+        confirmButton = { Button(onClick = { onSave(draft) }) { Text("加密保存") } },
+        dismissButton = { Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { OutlinedButton(onClick = onReset) { Text("恢复默认") }; OutlinedButton(onClick = onDismiss) { Text("取消") } } }
+    )
 }
 
 @Composable
@@ -1973,7 +2126,7 @@ private fun PrivacyCard(privacy: PrivacySnapshot, onRefresh: () -> Unit) {
                 Spacer(Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text("Android 网络隐私诊断", fontWeight = FontWeight.SemiBold, color = Ink)
-                    Text("VPN、Private DNS 与当前 DNS 服务器", fontSize = 12.sp, color = MutedInk)
+                    Text("VPN、Private DNS、传输方式与系统网络能力", fontSize = 12.sp, color = MutedInk)
                 }
                 Icon(Icons.Outlined.ExpandMore, contentDescription = if (expanded) "收起" else "展开", tint = MutedInk)
             }
@@ -1998,8 +2151,14 @@ private fun PrivacyCard(privacy: PrivacySnapshot, onRefresh: () -> Unit) {
                 HorizontalDivider(color = Border)
                 Spacer(Modifier.height(10.dp))
                 InfoLine(Icons.Outlined.Dns, "DNS", privacy.dnsServers.ifEmpty { listOf("系统未返回可读 DNS 地址") }.joinToString(" · "))
+                InfoLine(Icons.Outlined.NetworkCheck, "传输", privacy.transport)
+                InfoLine(Icons.Outlined.CheckCircle, "系统验证", if (privacy.validated) "已验证可访问互联网" else "未验证；可能是受限网络、登录页或当前检测未完成")
+                InfoLine(Icons.Outlined.Info, "计费", if (privacy.metered) "按流量计费或系统未知" else "系统标记为非计费网络")
+                InfoLine(Icons.Outlined.SettingsEthernet, "网络接口", privacy.interfaceName.ifBlank { "系统未提供" })
+                if (privacy.privateDnsHostname.isNotBlank()) InfoLine(Icons.Outlined.Dns, "Private DNS 主机名", privacy.privateDnsHostname)
+                if (privacy.downstreamKbps > 0 || privacy.upstreamKbps > 0) InfoLine(Icons.Outlined.Speed, "系统估算带宽", "下行 ${privacy.downstreamKbps.coerceAtLeast(0) / 1000} Mbps · 上行 ${privacy.upstreamKbps.coerceAtLeast(0) / 1000} Mbps")
                 Text(
-                    "说明：原生应用无法复刻浏览器 WebRTC 候选地址或 JavaScript 指纹，因此不会伪造 WebRTC / DNS 泄漏结论。",
+                    "说明：系统能力反映当前 Android 网络栈的即时报告，不等同于实测带宽、浏览器 WebRTC 候选地址或 JavaScript 指纹；应用不会伪造 WebRTC / DNS 泄漏结论。",
                     color = MutedInk,
                     fontSize = 12.sp,
                     lineHeight = 18.sp,
@@ -2083,7 +2242,8 @@ private fun DnsLookupCard(
     recordType: String,
     onHostChange: (String) -> Unit,
     onRecordTypeChange: (String) -> Unit,
-    onLookup: () -> Unit
+    onLookup: () -> Unit,
+    onShare: () -> Unit
 ) {
     Card(
         shape = RoundedCornerShape(18.dp),
@@ -2131,6 +2291,15 @@ private fun DnsLookupCard(
                     Text("${it.host} 的 ${it.recordType} 系统解析", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = Ink)
                     Spacer(Modifier.height(5.dp))
                     Text(it.addresses.joinToString("\n").ifBlank { if (it.recordType in setOf("A", "AAAA")) "系统未返回 ${it.recordType} 地址" else "该记录类型由公共 DoH 解析器提供交叉结果" }, fontSize = 12.sp, color = MutedInk, lineHeight = 18.sp)
+                    val consensus = analyzeDnsConsensus(it)
+                    Spacer(Modifier.height(10.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("解析器对比", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = Ink)
+                            Text(consensus.detail, fontSize = 10.sp, color = MutedInk, lineHeight = 14.sp)
+                        }
+                        StatusBadge(consensus.label, consensus.color, consensus.background)
+                    }
                     if (it.resolverResults.isNotEmpty()) {
                         Spacer(Modifier.height(12.dp))
                         Text("公共 DNS 交叉核验", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = Ink)
@@ -2148,9 +2317,27 @@ private fun DnsLookupCard(
                         Spacer(Modifier.height(8.dp))
                         Text("提示：不同解析器返回的地址差异可能来自 CDN、地域策略或 DNS 安全策略；这不是浏览器 DNS 泄漏结论。", color = MutedInk, fontSize = 10.sp, lineHeight = 15.sp)
                     }
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedButton(onClick = onShare, modifier = Modifier.fillMaxWidth()) {
+                        Icon(Icons.Outlined.Share, contentDescription = null, modifier = Modifier.size(17.dp))
+                        Spacer(Modifier.width(7.dp)); Text("分享 DNS 结果")
+                    }
                 }
             }
         }
+    }
+}
+
+private fun analyzeDnsConsensus(result: DnsLookupResult): DnsConsensus {
+    val successful = result.resolverResults.filter { it.error == null }
+    val remoteSets = successful.map { resolver -> resolver.addresses.map { it.trim().lowercase() }.filter { it.isNotBlank() }.toSet() }
+    val populated = remoteSets.filter { it.isNotEmpty() }
+    val systemSet = result.addresses.map { it.trim().lowercase() }.filter { it.isNotBlank() }.toSet()
+    return when {
+        successful.isEmpty() -> DnsConsensus("未覆盖", "公共 DoH 解析器均未返回可用结果。", MutedInk, SoftBlue)
+        populated.isEmpty() -> DnsConsensus("无记录", "可访问的公共解析器均未返回该记录类型。", MutedInk, SoftBlue)
+        populated.distinct().size == 1 && (systemSet.isEmpty() || systemSet == populated.first()) -> DnsConsensus("一致", "可用解析器返回相同记录；不代表永久或全球一致。", Green, SoftGreen)
+        else -> DnsConsensus("有差异", "至少两个可用解析器或系统解析返回不同记录；可能是 CDN、地域、缓存或策略差异。", Amber, SoftAmber)
     }
 }
 
@@ -2359,7 +2546,8 @@ private fun ServiceStatusCard(
     loading: Boolean,
     officialLoading: Boolean,
     onProbe: () -> Unit,
-    onRefreshOfficial: () -> Unit
+    onRefreshOfficial: () -> Unit,
+    onManageProbes: () -> Unit
 ) {
     Card(
         shape = RoundedCornerShape(18.dp),
@@ -2396,6 +2584,8 @@ private fun ServiceStatusCard(
                     Spacer(Modifier.width(7.dp)); Text(if (officialLoading) "刷新中" else "刷新官方")
                 }
             }
+            Spacer(Modifier.height(8.dp))
+            TextButton(onClick = onManageProbes, modifier = Modifier.align(Alignment.End)) { Text("管理端口目标") }
         }
     }
 }
@@ -3321,10 +3511,24 @@ private object NetworkRepository {
                 else -> "系统默认"
             }
         }.getOrDefault("系统默认")
+        val transports = buildList {
+            if (capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true) add("Wi‑Fi")
+            if (capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true) add("蜂窝数据")
+            if (capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) == true) add("以太网")
+            if (capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true) add("VPN")
+            if (capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_BLUETOOTH) == true) add("蓝牙网络")
+        }
         return PrivacySnapshot(
             vpnActive = capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true,
             privateDnsMode = privateDns,
-            dnsServers = properties?.dnsServers?.mapNotNull { it.hostAddress } ?: emptyList()
+            dnsServers = properties?.dnsServers?.mapNotNull { it.hostAddress } ?: emptyList(),
+            transport = transports.joinToString(" + ").ifBlank { "系统未识别活动网络" },
+            validated = capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true,
+            metered = capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED) != true,
+            interfaceName = properties?.interfaceName.orEmpty(),
+            privateDnsHostname = properties?.privateDnsServerName.orEmpty(),
+            downstreamKbps = capabilities?.linkDownstreamBandwidthKbps ?: 0,
+            upstreamKbps = capabilities?.linkUpstreamBandwidthKbps ?: 0
         )
     }
 
