@@ -59,9 +59,9 @@ jobs:
           requested="${{ inputs.archive_path }}"
           if [[ -n "$requested" ]]; then
             archive="$requested"
-          elif [ "${{ github.event_name }}" = "push" ] && git show --pretty="" --name-only "$GITHUB_SHA" | grep -qE '^uploads/.*\.(zip|tar\.gz|tgz|tar)$'; then
-            mapfile -t archives < <(find uploads -maxdepth 1 -type f \( -name '*.zip' -o -name '*.tar.gz' -o -name '*.tgz' -o -name '*.tar' \) -printf '%T@ %p\n' | sort -nr | cut -d' ' -f2-)
-            archive="${archives[0]:-}"
+          # Push builds always use the current repository source. Do not auto-select
+          # uploads/* archives: checkout uses a shallow history, so a tree-wide
+          # `git show --name-only` can mistake an old archive for a changed file.
           else
             archive=""
           fi
