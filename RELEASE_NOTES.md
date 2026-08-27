@@ -1,3 +1,16 @@
+## v1.0.13：统一服务商授权与默认公共检测回退
+
+本次修订将“授权数据源 Key”调整为统一的服务商管理界面。未填写任何 Key 时，APP 明确显示并自动使用 **ipify、ipapi.co、ipwho.is、ProxyCheck 和 Tor Project** 等可公开访问的默认检测源；填写可选服务商凭据后，才在本机按需叠加相应结果。
+
+| 调整项 | 行为 |
+|---|---|
+| 默认公共检测 | 置顶显示“已启用”；即使不配置 AbuseIPDB、ipapi.is、MaxMind 或 IPHub，也可完成基础检测。 |
+| 可选授权服务商 | AbuseIPDB、ipapi.is、MaxMind GeoIP Insights 和 IPHub 集中显示在同一授权区域；空 Key 时不请求这些官方要求授权的服务。 |
+| 网页 / 非 API 服务 | BrowserLeaks 标为网页入口；EdgeOne MyIP 标为当前不可用；NSTool 标为未提供 API，均不伪装为公共 API。 |
+| 密钥交互 | 每个 Key 及 MaxMind Account ID 仍有独立的显示/隐藏图标，并仅在本机加密保存。 |
+
+> 这次变更不代表 MaxMind 或 IPHub 可以无 Key 调用。它们的官方 API 均要求授权凭据；“默认公共检测”是合法可用的公开来源回退，而非绕过任何服务商授权。
+
 ## v1.0.12：多源 IP 情报与可回放风险评分
 
 本版本将 MyIPCheck 的授权数据源扩展为 **AbuseIPDB、ipapi.is、MaxMind GeoIP Insights 与 IPHub v2.2**，并将展示逻辑升级为可回放的 **v3.1 公开网络出口风险模型**。更新保持“风险信号指数”定位，不把主分表述为账号信誉、欺诈概率或第三方专有风控值。

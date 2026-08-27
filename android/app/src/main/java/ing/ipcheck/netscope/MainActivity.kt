@@ -943,9 +943,18 @@ private fun ApiKeySettingsDialog(
         title = { Text("授权数据源 Key", fontWeight = FontWeight.Bold, color = Ink) },
         text = {
             Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                Text("预置端点仅在填写对应 Key 后按需查询。Key 使用 Android Keystore AES-GCM 加密保存在本机，不上传到项目服务器、不写入日志，也不会出现在请求 URL 中。", fontSize = 12.sp, color = MutedInk, lineHeight = 18.sp)
+                Text("不填写任何授权也可以检测：APP 会自动使用可公开访问的默认来源。填写下方服务商凭据后，仅在本机按需叠加相应结果。所有凭据以 Android Keystore AES-GCM 加密保存，不上传、不写日志、不放入 URL。", fontSize = 12.sp, color = MutedInk, lineHeight = 18.sp)
                 Spacer(Modifier.height(12.dp))
-                SecretTextField(abuseKey, { abuseKey = it.trim() }, "AbuseIPDB API Key", "公开滥用置信分、报告量、独立报告者与最近报告")
+                Text("默认公共检测（自动启用）", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = Ink)
+                Spacer(Modifier.height(6.dp))
+                ProviderSourceLine("默认公共源", "已启用", "ipify、ipapi.co、ipwho.is、ProxyCheck 与 Tor Project；无需 Key。")
+                Spacer(Modifier.height(10.dp))
+                HorizontalDivider(color = Border)
+                Spacer(Modifier.height(10.dp))
+                Text("可选授权服务商（未填写时仍回退公共源）", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = Ink)
+                Text("没有填写 Key 时，AbuseIPDB、ipapi.is、MaxMind 与 IPHub 不会被请求；它们不能合法地以空 Key 调用。", fontSize = 11.sp, color = MutedInk, lineHeight = 16.sp)
+                Spacer(Modifier.height(8.dp))
+                SecretTextField(abuseKey, { abuseKey = it.trim() }, "AbuseIPDB API Key", "可选增强：公开滥用置信分、报告量、独立报告者与最近报告")
                 Spacer(Modifier.height(8.dp))
                 SecretTextField(ipApiKey, { ipApiKey = it.trim() }, "ipapi.is API Key", "VPN、代理、Tor、托管、滥用与爬虫字段")
                 Spacer(Modifier.height(8.dp))
@@ -953,8 +962,18 @@ private fun ApiKeySettingsDialog(
                 Spacer(Modifier.height(8.dp))
                 SecretTextField(maxMindLicenseKey, { maxMindLicenseKey = it.trim() }, "MaxMind License Key", if (!maxMindPairIsValid) "请同时填写 MaxMind Account ID 与 License Key" else "HTTPS Basic Auth；匿名化和网络上下文字段")
                 Spacer(Modifier.height(8.dp))
-                SecretTextField(ipHubKey, { ipHubKey = it.trim() }, "IPHub API Key", "调用 IPHub v2.2；代理、Tor、托管与低置信上下文")
-                Spacer(Modifier.height(8.dp))
+                SecretTextField(ipHubKey, { ipHubKey = it.trim() }, "IPHub API Key", "可选增强：调用 IPHub v2.2；代理、Tor、托管与低置信上下文")
+                Spacer(Modifier.height(12.dp))
+                Text("网页 / 非 API 服务商", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = Ink)
+                Spacer(Modifier.height(5.dp))
+                ProviderSourceLine("BrowserLeaks", "网页入口", "浏览器内 WebRTC、JavaScript、TLS、DNS 与指纹自检；不需要 Key，也不伪装为原生 API。")
+                Spacer(Modifier.height(5.dp))
+                ProviderSourceLine("EdgeOne MyIP", "当前不可用", "myip.edgeone.ai 在本次核验中无法解析；不自动请求，等待官方可用 API。")
+                Spacer(Modifier.height(5.dp))
+                ProviderSourceLine("NSTool", "未提供 API", "未发现可审计的 IP 情报接口；不自动请求、评分或下载外部 APK。")
+                Spacer(Modifier.height(12.dp))
+                Text("其他自定义（仅本地保存）", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = Ink)
+                Spacer(Modifier.height(6.dp))
                 OutlinedTextField(
                     value = customEndpoint,
                     onValueChange = { customEndpoint = it.trim() },
@@ -973,7 +992,7 @@ private fun ApiKeySettingsDialog(
                 SecretTextField(customKey, { customKey = it.trim() }, "自定义 API Key（可选）", if (!customPairIsValid) "请同时填写 HTTPS 请求地址与自定义 Key" else "仅与自定义地址配套本地保存")
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    if (configuredCount > 0) "已配置 $configuredCount / 5 个授权数据源；保存后会重新执行诊断。" else "未配置时，APP 仍使用无需 Key 的基础公开诊断。",
+                    if (configuredCount > 0) "已配置 $configuredCount / 5 个可选授权服务商；公共默认检测始终保持启用。保存后会重新执行诊断。" else "尚未配置授权服务商：将自动使用默认公共检测源。",
                     fontSize = 11.sp,
                     color = MutedInk
                 )
@@ -994,6 +1013,21 @@ private fun ApiKeySettingsDialog(
             }
         }
     )
+}
+
+@Composable
+private fun ProviderSourceLine(name: String, state: String, detail: String) {
+    val isEnabled = state == "已启用"
+    val stateColor = if (isEnabled) Green else Blue
+    val stateBackground = if (isEnabled) SoftGreen else SoftBlue
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(name, fontWeight = FontWeight.Medium, fontSize = 12.sp, color = Ink)
+            Text(detail, fontSize = 10.sp, color = MutedInk, lineHeight = 14.sp)
+        }
+        Spacer(Modifier.width(8.dp))
+        StatusBadge(state, stateColor, stateBackground)
+    }
 }
 
 @Composable

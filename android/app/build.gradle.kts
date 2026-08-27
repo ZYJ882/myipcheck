@@ -12,9 +12,9 @@ android {
         applicationId = "ing.ipcheck.netscope"
         minSdk = 26
         targetSdk = 35
-        // v1.0.12 adds MaxMind GeoIP Insights, IPHub, controlled key visibility, and the v3.1 evidence model.
-        versionCode = providers.gradleProperty("versionCode").orNull?.toIntOrNull() ?: 1012
-        versionName = providers.gradleProperty("versionName").orNull ?: "1.0.12"
+        // v1.0.13 groups optional providers under authorization while preserving no-key public-source fallback.
+        versionCode = providers.gradleProperty("versionCode").orNull?.toIntOrNull() ?: 1013
+        versionName = providers.gradleProperty("versionName").orNull ?: "1.0.13"
     }
 
     val releaseStorePath = providers.gradleProperty("signingStoreFile").orNull

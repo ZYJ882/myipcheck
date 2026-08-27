@@ -51,14 +51,15 @@ MyIP 与 IPCheck.ing 包含一些典型的浏览器能力，例如 WebRTC 候选
 
 ### 授权数据源 Key
 
-如果拥有 AbuseIPDB、ipapi.is、MaxMind GeoIP Insights 或 IPHub 的凭据，可点击 APP 顶部**地球图标右侧的钥匙图标**进入本地配置。每个凭据输入框旁均有小眼睛，可在本机即时显示或隐藏；所有 Key、MaxMind Account ID 和自定义 HTTPS 请求地址均使用 Android Keystore 的 AES-GCM 密钥加密后存储在当前设备；系统云备份与设备迁移已禁用。
+点击 APP 顶部**地球图标右侧的钥匙图标**可统一管理服务商。**不填写任何授权时，APP 会自动使用 ipify、ipapi.co、ipwho.is、ProxyCheck 与 Tor Project 的默认公共检测源。** 如拥有 AbuseIPDB、ipapi.is、MaxMind GeoIP Insights 或 IPHub 的凭据，可在同一界面选填以增加可用证据；每个凭据输入框旁均有小眼睛，可在本机即时显示或隐藏。所有 Key、MaxMind Account ID 和自定义 HTTPS 请求地址均使用 Android Keystore 的 AES-GCM 密钥加密后存储在当前设备；系统云备份与设备迁移已禁用。
 
 | 配置项 | 当前行为 |
 | --- | --- |
-| AbuseIPDB API Key | 保存后用于查询 AbuseIPDB APIv2 Check；置信分、报告量、独立报告者与最近报告构成公开滥用证据候选。 |
-| ipapi.is API Key | 保存后通过官方 JSON POST 查询安全属性；`is_abuser` 与 `is_crawler` 可进入相应行为家族，匿名化与数据中心只单列。 |
-| MaxMind Account ID + License Key | 成对保存后以 HTTPS Basic Auth 调用 GeoIP Insights；匿名化与网络字段只进入透明度、上下文和覆盖度。 |
-| IPHub API Key | 保存后以 `X-Key` 调用 v2.2；`block==1` 和 `proxyType` 只作为透明度/上下文，`block==2` 仅提示低置信。 |
+| 默认公共检测 | 无需配置，自动调用 ipify、ipapi.co、ipwho.is、ProxyCheck 与 Tor Project；所有可选授权服务留空时仍会工作。 |
+| AbuseIPDB API Key | 选填；保存后用于查询 AbuseIPDB APIv2 Check；置信分、报告量、独立报告者与最近报告构成公开滥用证据候选。 |
+| ipapi.is API Key | 选填；保存后通过官方 JSON POST 查询安全属性；`is_abuser` 与 `is_crawler` 可进入相应行为家族，匿名化与数据中心只单列。 |
+| MaxMind Account ID + License Key | 选填且必须成对；以 HTTPS Basic Auth 调用 GeoIP Insights；匿名化与网络字段只进入透明度、上下文和覆盖度。 |
+| IPHub API Key | 选填；以 `X-Key` 调用 v2.2；`block==1` 和 `proxyType` 只作为透明度/上下文，`block==2` 仅提示低置信。 |
 | 自定义 HTTPS 地址与 Key | 必须成对保存；当前版本仅本地加密保存，不会自动请求、不发送当前 IP，也不参与评分。 |
 
 具体操作与隐私边界见 [`API-Key-配置指南.md`](API-Key-配置指南.md)。
