@@ -12,8 +12,9 @@ android {
         applicationId = "ing.ipcheck.netscope"
         minSdk = 26
         targetSdk = 35
-        versionCode = providers.gradleProperty("versionCode").orNull?.toIntOrNull() ?: 1
-        versionName = providers.gradleProperty("versionName").orNull ?: "1.0.0"
+        // v1.0.11 supersedes the repository's prior v1.0.10 release.
+        versionCode = providers.gradleProperty("versionCode").orNull?.toIntOrNull() ?: 1011
+        versionName = providers.gradleProperty("versionName").orNull ?: "1.0.11"
     }
 
     val releaseStorePath = providers.gradleProperty("signingStoreFile").orNull
