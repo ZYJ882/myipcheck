@@ -23,7 +23,7 @@ NetScope 是一个以 **Kotlin、Jetpack Compose 与 Material 3** 编写的 Andr
 
 ## 纯净度与授权数据源
 
-主分采用 MyIPCheck 独立的 v3.1 公开网络出口风险信号模型，而不是 Ping0、MyIP、IPCheck.ing 或任何服务商的原始结论。主分只接受已观察到的公开行为证据；Tor、代理、VPN、中继、托管、IDC、ASN、CIDR 和地理属性只能用于网络透明度或上下文展示。没有独立、时间外真实标签校准前，分数不能解释为发生概率。
+主分采用 MyIPCheck 独立的 v3.2 公开网络出口风险信号模型，而不是 Ping0、MyIP、IPCheck.ing 或任何服务商的原始结论。主分只接受已观察到的公开行为证据；AbuseIPDB 以独立报告者为主、同源额外报告弱化计入，ProxyCheck 无类别 risk 不与同源具体行为重复计权。Tor、代理、VPN、中继、托管、IDC、ASN、CIDR 和地理属性只能用于网络透明度或上下文展示。没有独立、时间外真实标签校准前，分数不能解释为发生概率，也不能声称普适最优或最真实。
 
 授权设置统一管理数据源。留空时，APP 仍默认使用 `ipify`、`ipapi.co`、`ipwho.is`、ProxyCheck、Tor Project 及上述公共 DNS 解析器。用户可选填 AbuseIPDB、ipapi.is、MaxMind GeoIP Insights 和 IPHub 的凭据来增加覆盖度；它们的官方接口需要有效授权，空 Key 时不会被调用。每个 Key 与 MaxMind Account ID 均可用小眼睛单独显示/隐藏，且全部用 Android Keystore AES-GCM 本地加密。
 

@@ -1024,7 +1024,7 @@ private fun NetScopeApp(
         appendLine("Android VPN：${if (privacy.vpnActive) "已连接" else "未检测到"}")
         appendLine("网络传输：${privacy.transport}；系统验证：${if (privacy.validated) "已验证" else "未验证"}；计费：${if (privacy.metered) "按流量计费" else "非按流量计费"}")
         appendLine("Private DNS：${privacy.privateDnsMode}${privacy.privateDnsHostname.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty()}")
-        purityReport?.let { appendLine("公开风险主分：${formatRisk(it.score)} / 100；覆盖度：${formatRisk(it.coverage)}") }
+        purityReport?.let { appendLine("公开滥用风险：${formatRisk(it.risk)} / 85；反向展示分：${formatRisk(it.score)} / 100；透明度：${formatRisk(it.transparencyRisk)} / 100；覆盖度：${formatRisk(it.coverage)} / 100（${it.coverageLabel}）") }
         speedResult?.let { appendLine("Cloudflare：延迟 ${it.latencyMs}ms；抖动 ${formatRisk(it.jitterMs)}ms；下载 ${formatRisk(it.downloadMbps)} Mbps") }
         appendLine("安全清单：已自行完成 ${completedChecklistIds.size.coerceAtMost(LocalSecurityChecklist.size)} / ${LocalSecurityChecklist.size} 项（本地自评）")
         mtrResult?.takeIf { it.error == null }?.let { mtr ->
@@ -1036,7 +1036,7 @@ private fun NetScopeApp(
     }
 
     fun buildJsonReport(): String = JSONObject().apply {
-        put("schema", "netscope.network-diagnostic.v1")
+        put("schema", "netscope.network-diagnostic.v2")
         put("generatedAt", Instant.now().toString())
         put("ip", snapshot?.let {
             JSONObject().apply {
@@ -1051,7 +1051,14 @@ private fun NetScopeApp(
             put("downstreamKbpsEstimate", privacy.downstreamKbps); put("upstreamKbpsEstimate", privacy.upstreamKbps)
         })
         put("purity", purityReport?.let {
-            JSONObject().apply { put("score", it.score); put("coverage", it.coverage); put("label", it.label); put("checkedAt", it.checkedAt) }
+            JSONObject().apply {
+                put("model", "MyIPCheck public abuse signal index v3.2")
+                put("displayScore", it.score); put("riskSignal", it.risk); put("riskBudget", 85.0)
+                put("transparency", it.transparencyRisk); put("coverage", it.coverage); put("coverageLabel", it.coverageLabel); put("coverageDetail", it.coverageDetail)
+                put("label", it.label); put("summary", it.summary); put("checkedAt", it.checkedAt)
+                put("buckets", JSONArray().apply { it.buckets.forEach { bucket -> put(JSONObject().apply { put("title", bucket.title); put("value", bucket.value); put("detail", bucket.detail); put("tone", bucket.tone.name) }) } })
+                put("signals", JSONArray().apply { it.signals.forEach { signal -> put(JSONObject().apply { put("title", signal.title); put("value", signal.value); put("detail", signal.detail); put("tone", signal.tone.name) }) } })
+            }
         } ?: JSONObject.NULL)
         put("speed", speedResult?.let {
             JSONObject().apply { put("latencyMs", it.latencyMs); put("jitterMs", it.jitterMs); put("downloadMbps", it.downloadMbps); put("downloadedBytes", it.downloadedBytes) }
@@ -2371,7 +2378,7 @@ private fun PurityDiagnosisCard(
                         }
                     }
                     Spacer(Modifier.height(12.dp))
-                    Text("公开滥用风险：${formatRisk(report.risk)} / 100；网络透明度：${formatRisk(report.transparencyRisk)} / 100；证据覆盖：${formatRisk(report.coverage)} / 100（${report.coverageLabel}）。", fontSize = 11.sp, color = MutedInk, lineHeight = 16.sp)
+                    Text("公开滥用风险：${formatRisk(report.risk)} / 85；展示分：${formatRisk(report.score)} / 100；网络透明度：${formatRisk(report.transparencyRisk)} / 100；证据覆盖：${formatRisk(report.coverage)} / 100（${report.coverageLabel}）。", fontSize = 11.sp, color = MutedInk, lineHeight = 16.sp)
                     Spacer(Modifier.height(4.dp))
                     Text("主分只反映公开滥用风险的反向展示；Tor、代理、VPN、IDC 与 ASN 单列为透明度或网络上下文，不被当作历史恶意。", fontSize = 10.sp, color = MutedInk, lineHeight = 15.sp)
                     Spacer(Modifier.height(9.dp))
@@ -3772,17 +3779,24 @@ private object NetworkRepository {
         val abuseLastSeenDays = ageDays(abuseRisk?.lastReportedAt.orEmpty())
         val compromisedEvidence = if (proxyCheck?.compromised == true) evidence(0.95, 0.60, 1, 1.0, proxyLastSeenDays, 120.0) else 0.0
         val attackHistoryEvidence = if ((proxyCheck?.attackEventCount ?: 0) > 0) evidence(0.80, 0.45, proxyCheck?.attackEventCount ?: 0, 3.0, proxyLastSeenDays, 45.0) else 0.0
-        val abuseSupport = maxOf(abuseRisk?.distinctUsers ?: 0, abuseRisk?.totalReports ?: 0)
+        // AbuseIPDB 的 confidence 已是供应商对“完全恶意”的保守评级；报告总数不能等价于独立证据。
+        // v3.2 以独立报告者为主，额外同源报告只作较弱支持，避免共享/动态 IP 被重复放大。
+        val abuseDistinctUsers = abuseRisk?.distinctUsers?.coerceAtLeast(0) ?: 0
+        val abuseReports = abuseRisk?.totalReports?.coerceAtLeast(0) ?: 0
+        val abuseSupport = abuseDistinctUsers + ((abuseReports - abuseDistinctUsers).coerceAtLeast(0) * 0.25).toInt()
         val abuseScoreFactor = (abuseRisk?.confidenceScore ?: 0).coerceIn(0, 100) / 100.0
-        val abuseEvidence = if (abuseScoreFactor > 0.0) {
-            (0.60 * 0.75 * (0.25 + 0.75 * abuseScoreFactor) * volume(maxOf(1, abuseSupport), 5.0) * decay(abuseLastSeenDays, 60.0, 0.60)).coerceIn(0.0, 0.95)
+        val abuseEvidence = if (abuseScoreFactor > 0.0 && abuseSupport > 0) {
+            (0.60 * 0.75 * abuseScoreFactor.pow(1.3) * volume(abuseSupport, 5.0) * decay(abuseLastSeenDays, 60.0, 0.60)).coerceIn(0.0, 0.95)
         } else 0.0
         val abuserEvidence = if (ipApiIsSecurity?.isAbuser == true) evidence(0.60, 0.65, 1, 1.0, null, 60.0) else 0.0
         val crawlerEvidence = combinedEvidence(listOf(
             if (proxyCheck?.scraper == true) evidence(0.20, 0.55, 1, 1.0, proxyLastSeenDays, 14.0) else 0.0,
             if (ipApiIsSecurity?.isCrawler == true) evidence(0.20, 0.60, 1, 1.0, null, 14.0) else 0.0
         ))
-        val genericVendorEvidence = proxyCheck?.risk?.takeIf { it > 0 }?.let { risk ->
+        // ProxyCheck 同一谱系的 risk 只在没有更具体的 compromised/attack/scraper 行为时作兜底。
+        val hasClassifiedProxyBehavior = proxyCheck?.compromised == true ||
+            (proxyCheck?.attackEventCount ?: 0) > 0 || proxyCheck?.scraper == true
+        val genericVendorEvidence = proxyCheck?.risk?.takeIf { it > 0 && !hasClassifiedProxyBehavior }?.let { risk ->
             (0.25 * 0.35 * (risk.coerceIn(0, 100) / 100.0).pow(1.2) * decay(proxyLastSeenDays, 30.0, 0.60)).coerceIn(0.0, 0.95)
         } ?: 0.0
         val familyEvidence = listOf(

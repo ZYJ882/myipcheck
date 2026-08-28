@@ -12,9 +12,9 @@ android {
         applicationId = "ing.ipcheck.netscope"
         minSdk = 26
         targetSdk = 35
-        // v1.0.22 adds constrained Globalping MTR, DNS.SB, productivity presets and checklist search.
-        versionCode = providers.gradleProperty("versionCode").orNull?.toIntOrNull() ?: 1022
-        versionName = providers.gradleProperty("versionName").orNull ?: "1.0.22"
+        // v1.0.23 finalizes the v3.2 transparent public abuse signal index and replayable export.
+        versionCode = providers.gradleProperty("versionCode").orNull?.toIntOrNull() ?: 1023
+        versionName = providers.gradleProperty("versionName").orNull ?: "1.0.23"
     }
 
     val releaseStorePath = providers.gradleProperty("signingStoreFile").orNull

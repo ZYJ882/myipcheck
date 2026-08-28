@@ -1,4 +1,4 @@
-# 增强透明网络出口风险诊断模块规格 v3.1
+# 增强透明网络出口风险诊断模块规格 v3.2（最终透明版）
 
 ## 产品定位
 
@@ -21,7 +21,7 @@ MyIPCheck 的“透明网络出口风险诊断”是独立设计的**公开网�
 |---|---|---|---|---|
 | ProxyCheck | 无 Key 的公开端点，仍可能受配额影响 | `compromised`、攻击历史、`scraper`、低权重 `risk` | `proxy`、`vpn`、`tor`、`hosting`、`anonymous` | 无类别 `risk` 限权，不与其他供应商总分线性叠加。 |
 | Tor Project | 公开端点 | 否 | 官方 Tor 出口确认 | 仅说明当前 Tor 网络属性。 |
-| AbuseIPDB | 用户配置本地 Key 后调用 | `abuseConfidenceScore`、`totalReports`、`numDistinctUsers`、`lastReportedAt` | `isTor` 仅透明度 | 记录、报告者和时效需保留并连续映射。 |
+| AbuseIPDB | 用户配置本地 Key 后调用 | `abuseConfidenceScore`、`totalReports`、`numDistinctUsers`、`lastReportedAt` | `isTor` 仅透明度 | 独立报告者优先；同源额外报告仅按 25% 弱化计入，记录、报告者和时效需保留并连续映射。 |
 | ipapi.is | 用户配置本地 Key 后调用 | `is_abuser`、`is_crawler` | `is_proxy`、`is_vpn`、`is_tor`、`is_datacenter`、`egress_service` | 数据中心和受管理出口不能单独判恶意。 |
 | MaxMind GeoIP Insights | 本地 Account ID + License Key，HTTPS Basic Auth | 否 | `anonymizer`、`traits.network`、ASN、ISP、连接类型 | 仅补充匿名化和网络身份，不能作为历史滥用证据。 |
 | IPHub v2.2 | 本地 Key，`X-Key` + `Accept-Version: 2.2` | 否 | `block==1`、`proxyType`、ASN、ISP、国家 | `block==2` 为可能误报的低置信提示，不能计入风险。 |
@@ -44,7 +44,7 @@ R = 85 × [1 − Π_g (1 − E_g)]
 P = 100 − R
 ```
 
-当前参数是有公开字段依据、可回放的产品先验，不是供应商正确率或 IP 恶意概率。各参数、家族预算、时间半衰期与质量先验见 [`purity_scoring_model_v3_1.md`](purity_scoring_model_v3_1.md)。
+v3.2 对 AbuseIPDB 使用 `n = distinctUsers + floor(0.25 × max(totalReports − distinctUsers, 0))`，并使用 `confidence^1.3` 抑制低置信度伪精度；ProxyCheck 无类别 `risk` 在同源具体行为已命中时不再重复计权。当前参数是有公开字段依据、可回放的产品先验，不是供应商正确率或 IP 恶意概率。没有跨服务商、跨时间且独立的真实标签时，不能声称评分是普适最优、最真实或概率。各参数、家族预算、时间半衰期与质量先验见 [`purity_scoring_model_v3_1.md`](purity_scoring_model_v3_1.md)。
 
 ## 字段缺失与来源状态
 
