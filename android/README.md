@@ -9,13 +9,13 @@ NetScope 是一个以 **Kotlin、Jetpack Compose 与 Material 3** 编写的 Andr
 | 当前 IP 信息 | 查询公网 IPv4、可用 IPv6、国家/地区/城市、时区、ISP 与 ASN；支持复制 IPv4。 |
 | 查询 IP | 输入任何 IPv4 或 IPv6，查询其位置、时区、ISP、ASN 与 IP 版本；查询结果自动进入本地历史。 |
 | IP 历史 | 最多保存最近 30 条当前出口或手动查询记录；数据通过 Android Keystore AES-GCM 加密，仅保存在当前设备，支持清除。 |
-| 连通性与端口 | 并行检测可编辑 HTTPS 目标，显示状态和端到端 HTTP 延迟；另可管理最多 12 个单主机单端口目标（端口 1–65535），配置加密本地保存。禁止路径、账户语法和端口范围，不提供扫描能力。 |
+| 连通性与端口 | 并行检测可编辑 HTTPS 目标，显示状态和端到端 HTTP 延迟；设置中可加入生产力 HTTPS 预设；另可管理最多 12 个单主机单端口目标（端口 1–65535），配置加密本地保存。禁止路径、账户语法和端口范围，不提供扫描能力。 |
 | 快速网络测量 | 用户手动触发后，对 Cloudflare Edge 执行 5 次轻量延迟采样和最多 **1 MB** 下载，展示中位延迟、抖动和下载吞吐；不上传数据、不自动运行。 |
-| DNS 解析 | 支持 A、AAAA、TXT、MX、NS、CNAME；对域名执行 Android 系统解析，并使用 Cloudflare、Google Public DNS、Quad9 的 DoH 结果交叉核验，显示一致/有差异/无记录/未覆盖并可分享结果。地址差异不等于浏览器 DNS 泄漏。 |
+| DNS 解析 | 支持 A、AAAA、TXT、MX、NS、CNAME；对域名执行 Android 系统解析，并使用 Cloudflare、Google Public DNS、Quad9、DNS.SB 的 DoH 结果交叉核验，显示一致/有差异/无记录/未覆盖并可分享结果。地址差异不等于浏览器 DNS 泄漏。 |
 | Whois | 连接公开 Whois 注册表查询域名或 IP 注册信息。 |
 | 服务状态 | 将当前网络的单端口可达性与 GitHub、Cloudflare、OpenAI、Discord 官方公开状态摘要分开显示。官方状态不等于本机端到端可达性，也不是事故聚合。 |
 | Android 网络环境 | 显示系统 VPN、Private DNS 模式和主机名、DNS 服务器、传输类型、系统互联网验证、按流量计费提示、接口及系统估算上下行带宽。系统估算不是实测带宽或浏览器指纹。 |
-| 离线安全清单 | 提供 30 项设备、账户、网络、隐私和应急自评建议；进度经 Android Keystore AES-GCM 加密后仅存本机，可随时清除。它不会读取系统设置、扫描应用或判定设备安全。 |
+| 离线安全清单 | 提供 30 项设备、账户、网络、隐私和应急自评建议，支持按领域、标题和建议内容搜索；进度经 Android Keystore AES-GCM 加密后仅存本机，可随时清除。它不会读取系统设置、扫描应用或判定设备安全。 |
 | 显示主题 | 顶部显示设置可选跟随系统、始终浅色或始终深色；偏好加密存于本机，不会改变检测结论或发起网络请求。 |
 | 增强纯净度诊断 | 使用公开行为风险证据生成独立主分，并将代理、VPN、Tor、IDC、ASN、覆盖度分开解释。它不是第三方专有分数或欺诈概率。 |
 | 摘要分享 | 通过 Android 系统分享面板输出当前网络诊断的 Markdown 兼容纯文本或结构化 JSON 摘要；只在用户点击时执行，不上传、不生成公开链接，且不含授权 Key、加密 IP 历史或浏览器指纹。 |
@@ -29,7 +29,7 @@ NetScope 是一个以 **Kotlin、Jetpack Compose 与 Material 3** 编写的 Andr
 
 ## 已知边界
 
-WebRTC 候选地址、浏览器 Canvas/WebGL/JavaScript 指纹、完整递归 DNS Leak、PWA、键盘快捷键和网页 Persona Check 需要浏览器运行环境，不能由原生 Android API 等价复刻。APP 已按需支持受限的 Globalping ping 和 OONI 历史元数据查询，但 Globalping MTR、实时多国审查任务、可分享的过期链接、Earth Online 与官方服务事故聚合仍需要远端探针或后端服务，尚不在 APP 内伪装实现。
+WebRTC 候选地址、浏览器 Canvas/WebGL/JavaScript 指纹、完整递归 DNS Leak、PWA、键盘快捷键和网页 Persona Check 需要浏览器运行环境，不能由原生 Android API 等价复刻。APP 已按需支持受限的 Globalping ping/MTR 和 OONI 历史元数据查询；MTR 仍是远端探针路径观测，不是本机路由。实时多国审查任务、可分享的过期链接、Earth Online 与官方服务事故聚合仍需要远端探针或后端服务，尚不在 APP 内伪装实现。
 
 ## 构建与安装
 

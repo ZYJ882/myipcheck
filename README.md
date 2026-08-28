@@ -21,16 +21,16 @@
 | 模块 | Android 原生实现内容 |
 | --- | --- |
 | 公网 IP 信息 | 查询 IPv4、可用时的 IPv6、国家 / 地区 / 城市、时区、ISP 与 ASN，并支持复制 IPv4。 |
-| 网络连通性 | 检测 HTTPS 目标的可达性和延迟；可添加、删除或恢复最多 12 个 HTTPS 目标。端口探测另支持最多 12 个单主机单端口目标，均加密保存在本机。 |
+| 网络连通性 | 检测 HTTPS 目标的可达性和延迟；可添加、删除或恢复最多 12 个 HTTPS 目标，并可加入生产力服务预设。端口探测另支持最多 12 个单主机单端口目标，均加密保存在本机。 |
 | 增强纯净度诊断 | 以公开滥用行为证据生成连续主分，并把 Proxy / VPN / Tor / 中继、托管 / IDC / ASN 和证据覆盖度独立展示；每一分均可回放来源、字段与时效。 |
 | Android 网络隐私 | 展示 Android VPN、Private DNS、系统 DNS、传输类型、互联网验证、计费提示、网络接口与系统估算带宽；不申请额外敏感权限。 |
-| 离线安全清单 | 内置 30 项设备、账户、网络、隐私和应急自评建议；完成进度经 Android Keystore AES-GCM 加密后仅存本机，可随时清除；不读取系统设置或扫描应用。 |
+| 离线安全清单 | 内置 30 项设备、账户、网络、隐私和应急自评建议，支持按领域、标题和建议内容搜索；完成进度经 Android Keystore AES-GCM 加密后仅存本机，可随时清除；不读取系统设置或扫描应用。 |
 | 显示主题 | 支持跟随系统、始终浅色与始终深色；选择加密保存在本机，不影响网络请求或诊断结果。 |
-| 原生 DNS 与 Whois | 支持 A、AAAA、TXT、MX、NS、CNAME；使用 Android 系统解析器（A/AAAA）及 Cloudflare、Google Public DNS、Quad9 的 DoH 交叉查询，并给出一致/差异/未覆盖提示、支持本地分享；通过公开注册表查询域名或 IP 的 Whois 信息。 |
+| 原生 DNS 与 Whois | 支持 A、AAAA、TXT、MX、NS、CNAME；使用 Android 系统解析器（A/AAAA）及 Cloudflare、Google Public DNS、Quad9、DNS.SB 的 DoH 交叉查询，并给出一致/差异/未覆盖提示、支持本地分享；通过公开注册表查询域名或 IP 的 Whois 信息。 |
 | 独立 ASN 与 MAC 查询 | 通过 RIPE NCC RIPEstat 查询 ASN 概览和 RIS 观测邻居；通过 MACVendors 查询 MAC/OUI 厂商登记，不读取设备 MAC。 |
 | 服务状态 | 同时显示当前网络的可配置单端口连通性，以及 GitHub、Cloudflare、OpenAI、Discord 官方状态页公开摘要。 |
 | 快速网络测量 | 用户主动测量 Cloudflare 的中位延迟、抖动和最多 1 MB 下载吞吐；不上传、不自动运行。 |
-| 全球与审查数据 | 用户可按需调用 Globalping，从美国、德国、新加坡各 1 个探针执行 ping；可查询 OONI 最多 5 条公开 Web Connectivity 历史元数据。两者均不代表本机实时结果。 |
+| 全球与审查数据 | 用户可按需调用 Globalping，从美国、德国、新加坡各 1 个探针执行 ping 或 MTR；MTR 展示最多 64 跳。可查询 OONI 最多 5 条公开 Web Connectivity 历史元数据。两者均不代表本机实时结果。 |
 | 加密 IP 历史与摘要分享 | 查询结果最多保留 30 条加密本地历史，支持清除；可调用 Android 系统分享面板导出 Markdown 兼容文本或结构化 JSON 摘要，且不含授权 Key、IP 历史或浏览器指纹数据。 |
 | 设备环境 | 展示 Android 版本、语言、应用标识等本机环境信息。 |
 | 浏览器备用入口 | 仅在 WebRTC、JavaScript 指纹或真实多地区探针等依赖浏览器环境时，才打开 IPCheck.ing。 |
@@ -98,6 +98,10 @@ cd android
 ## 自动化开发流程
 
 仓库保留 [Android 自动化工作流](.github/workflows/android-release.yml) 供维护者处理源码压缩包。压缩包可使用 ZIP、TAR、TAR.GZ 或 TGZ，内部需包含可构建的 Gradle 工程，例如 `settings.gradle.kts`、`build.gradle.kts` 和 `app/` 目录；详细约定见 [`uploads/README.md`](uploads/README.md)。
+
+## v1.0.22 本批扩展
+
+新增受限 Globalping MTR、DNS.SB DoH 解析器、生产力 HTTPS 目标预设和安全清单搜索。MTR 结果属于远端探针路径观测；多解析器结果差异不等于 DNS 泄漏；生产力预设保存后仍需用户手动探测。
 
 ## 网络与隐私
 

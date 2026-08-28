@@ -357,6 +357,33 @@ private data class GlobalPingResult(
     val error: String? = null
 )
 
+private data class MtrHop(
+    val number: Int,
+    val host: String,
+    val ip: String,
+    val asn: String,
+    val lossPct: Double?,
+    val lastMs: Double?,
+    val avgMs: Double?,
+    val worstMs: Double?
+)
+
+private data class MtrProbeResult(
+    val location: String,
+    val network: String,
+    val asn: String,
+    val status: String,
+    val hops: List<MtrHop>
+)
+
+private data class MtrResult(
+    val target: String,
+    val measurementId: String,
+    val status: String,
+    val probes: List<MtrProbeResult>,
+    val error: String? = null
+)
+
 private data class OoniMeasurementResult(
     val input: String,
     val country: String,
@@ -798,6 +825,21 @@ private val DefaultEndpoints = listOf(
     EndpointResult("Wikipedia", "wikipedia.org", "https://www.wikipedia.org")
 )
 
+private val ProductivityEndpointPreset = listOf(
+    EndpointResult("Microsoft 365", "microsoft.com", "https://www.microsoft.com"),
+    EndpointResult("Slack", "slack.com", "https://slack.com"),
+    EndpointResult("Notion", "notion.so", "https://www.notion.so"),
+    EndpointResult("Atlassian", "atlassian.com", "https://www.atlassian.com"),
+    EndpointResult("Dropbox", "dropbox.com", "https://www.dropbox.com"),
+    EndpointResult("Zoom", "zoom.us", "https://zoom.us"),
+    EndpointResult("Figma", "figma.com", "https://www.figma.com"),
+    EndpointResult("GitLab", "gitlab.com", "https://gitlab.com"),
+    EndpointResult("npm", "npmjs.com", "https://www.npmjs.com"),
+    EndpointResult("PyPI", "pypi.org", "https://pypi.org"),
+    EndpointResult("AWS", "aws.amazon.com", "https://aws.amazon.com"),
+    EndpointResult("Docker Hub", "docker.com", "https://hub.docker.com")
+)
+
 private val DefaultPortProbes = listOf(
     PortProbeResult("github.com", 443, CheckStatus.IDLE),
     PortProbeResult("api.openai.com", 443, CheckStatus.IDLE),
@@ -878,6 +920,9 @@ private fun NetScopeApp(
     var globalPingTarget by remember { mutableStateOf("example.com") }
     var globalPingResult by remember { mutableStateOf<GlobalPingResult?>(null) }
     var globalPingLoading by remember { mutableStateOf(false) }
+    var mtrTarget by remember { mutableStateOf("") }
+    var mtrResult by remember { mutableStateOf<MtrResult?>(null) }
+    var mtrLoading by remember { mutableStateOf(false) }
     var ooniDomain by remember { mutableStateOf("example.com") }
     var ooniCountry by remember { mutableStateOf("US") }
     var ooniResult by remember { mutableStateOf<OoniQueryResult?>(null) }
@@ -982,6 +1027,10 @@ private fun NetScopeApp(
         purityReport?.let { appendLine("公开风险主分：${formatRisk(it.score)} / 100；覆盖度：${formatRisk(it.coverage)}") }
         speedResult?.let { appendLine("Cloudflare：延迟 ${it.latencyMs}ms；抖动 ${formatRisk(it.jitterMs)}ms；下载 ${formatRisk(it.downloadMbps)} Mbps") }
         appendLine("安全清单：已自行完成 ${completedChecklistIds.size.coerceAtMost(LocalSecurityChecklist.size)} / ${LocalSecurityChecklist.size} 项（本地自评）")
+        mtrResult?.takeIf { it.error == null }?.let { mtr ->
+            appendLine("Globalping MTR：目标 ${mtr.target}；返回 ${mtr.probes.size} 个远端探针")
+            mtr.probes.forEach { probe -> appendLine("- ${probe.location}: ${probe.hops.size} 跳，状态 ${probe.status}") }
+        }
         appendLine()
         appendLine("说明：这是当前设备和当前网络的快照，不是欺诈概率、账号信誉、安全保证、浏览器指纹或 DNS 泄漏结论。")
     }
@@ -1020,6 +1069,15 @@ private fun NetScopeApp(
             JSONObject().apply {
                 put("host", result.host); put("recordType", result.recordType); put("systemAnswers", JSONArray().apply { result.addresses.forEach(::put) })
                 put("resolverResults", JSONArray().apply { result.resolverResults.forEach { resolver -> put(JSONObject().apply { put("resolver", resolver.resolver); put("answers", JSONArray().apply { resolver.addresses.forEach(::put) }); put("status", resolver.status); put("error", resolver.error) }) } })
+            }
+        } ?: JSONObject.NULL)
+        put("mtr", mtrResult?.takeIf { it.error == null }?.let { mtr ->
+            JSONObject().apply {
+                put("target", mtr.target); put("measurementId", mtr.measurementId); put("status", mtr.status)
+                put("probes", JSONArray().apply { mtr.probes.forEach { probe -> put(JSONObject().apply {
+                    put("location", probe.location); put("network", probe.network); put("asn", probe.asn); put("status", probe.status)
+                    put("hops", JSONArray().apply { probe.hops.forEach { hop -> put(JSONObject().apply { put("number", hop.number); put("host", hop.host); put("ip", hop.ip); put("asn", hop.asn); put("lossPct", hop.lossPct); put("lastMs", hop.lastMs); put("avgMs", hop.avgMs); put("worstMs", hop.worstMs) }) } })
+                }) } })
             }
         } ?: JSONObject.NULL)
         put("securityChecklist", JSONObject().apply { put("completed", completedChecklistIds.size.coerceAtMost(LocalSecurityChecklist.size)); put("total", LocalSecurityChecklist.size); put("scope", "local-self-assessment") })
@@ -1208,6 +1266,24 @@ private fun NetScopeApp(
                     .getOrElse { GlobalPingResult(target, "", emptyList(), "错误", it.asUserMessage()) }
             }
             globalPingLoading = false
+        }
+    }
+
+    fun runGlobalMtr() {
+        val target = mtrTarget.trim().ifBlank { snapshot?.ipv4.orEmpty() }
+            .removePrefix("https://").removePrefix("http://").substringBefore('/').trim()
+        if (!isValidProbeHost(target)) {
+            mtrResult = MtrResult(target, "", "错误", emptyList(), "请输入有效的域名或 IP 地址")
+            return
+        }
+        mtrTarget = target
+        scope.launch {
+            mtrLoading = true
+            mtrResult = withContext(Dispatchers.IO) {
+                runCatching { NetworkRepository.runGlobalMtr(target) }
+                    .getOrElse { MtrResult(target, "", "错误", emptyList(), it.asUserMessage()) }
+            }
+            mtrLoading = false
         }
     }
 
@@ -1516,6 +1592,15 @@ private fun NetScopeApp(
                 )
             }
             item {
+                MtrCard(
+                    target = mtrTarget,
+                    result = mtrResult,
+                    loading = mtrLoading,
+                    onTargetChange = { mtrTarget = it },
+                    onRun = { runGlobalMtr() }
+                )
+            }
+            item {
                 ServiceStatusCard(
                     probes = portProbes,
                     officialStatuses = officialStatuses,
@@ -1756,6 +1841,15 @@ private fun ConnectivitySettingsDialog(
                     }
                 }
                 HorizontalDivider(color = Border)
+                Spacer(Modifier.height(10.dp))
+                OutlinedButton(
+                    onClick = {
+                        val existing = draft.map { it.name.lowercase() }.toSet()
+                        draft = (draft + ProductivityEndpointPreset.filter { it.name.lowercase() !in existing }).take(12)
+                        error = if (draft.size >= 12) "已达到 12 项上限；其余预设未加入" else null
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("加入生产力 HTTPS 预设（最多 12 项）") }
                 Spacer(Modifier.height(10.dp))
                 OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("显示名称") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 Spacer(Modifier.height(8.dp))
@@ -2162,7 +2256,11 @@ private fun SecurityChecklistCard(
     onToggle: (String) -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
+    var search by remember { mutableStateOf("") }
     val completedCount = items.count { it.id in completedIds }
+    val visibleItems = items.filter { item ->
+        search.isBlank() || listOf(item.category, item.title, item.guidance).any { it.contains(search.trim(), ignoreCase = true) }
+    }
     Card(
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = CardSurface),
@@ -2188,7 +2286,16 @@ private fun SecurityChecklistCard(
             )
             if (expanded) {
                 Spacer(Modifier.height(12.dp))
-                items.groupBy { it.category }.forEach { (category, categoryItems) ->
+                OutlinedTextField(
+                    value = search,
+                    onValueChange = { search = it },
+                    label = { Text("搜索清单") },
+                    placeholder = { Text("例如：权限、Wi-Fi、密码") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(10.dp))
+                visibleItems.groupBy { it.category }.forEach { (category, categoryItems) ->
                     Text(category, fontWeight = FontWeight.SemiBold, color = Blue, fontSize = 13.sp)
                     Spacer(Modifier.height(4.dp))
                     categoryItems.forEach { item ->
@@ -2213,6 +2320,7 @@ private fun SecurityChecklistCard(
                     }
                     Spacer(Modifier.height(7.dp))
                 }
+                if (visibleItems.isEmpty()) Text("没有匹配的清单项。", color = MutedInk, fontSize = 12.sp)
                 Text("提示：可随时清除进度；清单没有联网评分，也不会上传勾选内容。", color = MutedInk, fontSize = 11.sp, lineHeight = 16.sp)
             }
         }
@@ -2642,7 +2750,7 @@ private fun DnsLookupCard(
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(17.dp)) {
-            NativeToolHeader(Icons.Outlined.Dns, "DNS 解析", "系统解析 + Cloudflare、Google、Quad9 的 DoH 交叉查询")
+            NativeToolHeader(Icons.Outlined.Dns, "DNS 解析", "系统解析 + Cloudflare、Google、Quad9、DNS.SB 的 DoH 交叉查询")
             Spacer(Modifier.height(12.dp))
             OutlinedTextField(
                 value = host,
@@ -2697,7 +2805,7 @@ private fun DnsLookupCard(
                     }
                     if (it.resolverResults.isNotEmpty()) {
                         Spacer(Modifier.height(12.dp))
-                        Text("公共 DNS 交叉核验", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = Ink)
+                        Text("公共 DNS 交叉核验（含 DNS.SB）", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = Ink)
                         Spacer(Modifier.height(6.dp))
                         it.resolverResults.forEachIndexed { index, resolver ->
                             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -2853,6 +2961,81 @@ private fun MacLookupCard(
                     Text(item.mac.chunked(2).joinToString(":"), fontWeight = FontWeight.Bold, fontSize = 17.sp, color = Ink)
                     InfoLine(Icons.Outlined.Business, "厂商", item.vendor)
                     if (item.isLocallyAdministered) Text("此地址设置了本地管理位，常见于随机化/虚拟 MAC；公开 OUI 厂商仅供参考。", color = Amber, fontSize = 11.sp, lineHeight = 16.sp, modifier = Modifier.padding(top = 5.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MtrCard(
+    target: String,
+    result: MtrResult?,
+    loading: Boolean,
+    onTargetChange: (String) -> Unit,
+    onRun: () -> Unit
+) {
+    Card(
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = CardSurface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(17.dp)) {
+            NativeToolHeader(Icons.Outlined.NetworkCheck, "Globalping MTR", "从美国、德国和新加坡各选 1 个远端探针进行逐跳路径追踪")
+            Spacer(Modifier.height(10.dp))
+            Text("仅在点击后发起，单次最多使用 3 个 Globalping 测试。中间跳丢包可能是 ICMP 限速；只有从某一跳开始持续丢包才值得进一步调查。", color = MutedInk, fontSize = 11.sp, lineHeight = 16.sp)
+            Spacer(Modifier.height(10.dp))
+            OutlinedTextField(
+                value = target,
+                onValueChange = onTargetChange,
+                label = { Text("目标域名或 IP（留空使用当前 IPv4）") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(9.dp))
+            Button(onClick = onRun, enabled = !loading, colors = ButtonDefaults.buttonColors(containerColor = Blue), modifier = Modifier.fillMaxWidth()) {
+                if (loading) CircularProgressIndicator(modifier = Modifier.size(17.dp), color = Color.White, strokeWidth = 2.dp)
+                else Icon(Icons.Outlined.NetworkCheck, contentDescription = null, modifier = Modifier.size(17.dp))
+                Spacer(Modifier.width(7.dp)); Text(if (loading) "MTR 测量中…" else "开始 Globalping MTR")
+            }
+            result?.error?.let {
+                Spacer(Modifier.height(9.dp)); ResultMessage(it, Red)
+            }
+            if (result != null && result.error == null) {
+                Spacer(Modifier.height(11.dp))
+                Text("目标：${result.target} · 测量状态：${result.status}", color = Ink, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                result.probes.forEach { probe ->
+                    Spacer(Modifier.height(10.dp))
+                    HorizontalDivider(color = Border)
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(probe.location.ifBlank { "位置未知" }, color = Ink, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                            Text(listOf(probe.network, probe.asn).filter(String::isNotBlank).joinToString(" · ").ifBlank { "探针网络未知" }, color = MutedInk, fontSize = 10.sp)
+                        }
+                        StatusBadge(probe.status.ifBlank { "未知" }, if (probe.status.equals("finished", true)) Green else Amber, if (probe.status.equals("finished", true)) SoftGreen else SoftAmber)
+                    }
+                    if (probe.hops.isEmpty()) {
+                        Text("该探针未返回可解析的逐跳结果。", color = MutedInk, fontSize = 11.sp, modifier = Modifier.padding(top = 7.dp))
+                    } else {
+                        probe.hops.take(64).forEach { hop ->
+                            Row(modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text("${hop.number}", color = MutedInk, fontSize = 10.sp, modifier = Modifier.width(24.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(listOf(hop.host, hop.ip).filter(String::isNotBlank).joinToString(" · ").ifBlank { "未知节点" }, color = Ink, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(hop.asn.takeIf { it.isNotBlank() } ?: "ASN 未知", color = MutedInk, fontSize = 9.sp)
+                                }
+                                Text(
+                                    listOfNotNull(hop.avgMs?.let { "平均 ${formatRisk(it)}ms" }, hop.lossPct?.let { "丢包 ${formatRisk(it)}%" }).joinToString("\n").ifBlank { "—" },
+                                    color = if ((hop.lossPct ?: 0.0) > 0) Amber else MutedInk,
+                                    fontSize = 9.sp,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.End
+                                )
+                            }
+                        }
+                        if (probe.hops.size > 64) Text("仅显示前 64 跳。", color = MutedInk, fontSize = 10.sp)
+                    }
                 }
             }
         }
@@ -3133,6 +3316,58 @@ private fun Footer() {
     }
 }
 
+private fun parseMtrOutput(rawOutput: String): List<MtrHop> {
+    if (rawOutput.isBlank()) return emptyList()
+    val columnFields = mapOf(
+        "loss%" to "loss", "loss" to "loss", "last" to "last", "avg" to "avg",
+        "wrst" to "worst", "worst" to "worst"
+    )
+    var columns: List<String>? = null
+    val seen = mutableSetOf<Int>()
+    val hops = mutableListOf<MtrHop>()
+    val hopPattern = Regex("^\\\\s*(\\\\d{1,2})\\\\.(?:\\\\|--)?\\\\s+(.*)$")
+    rawOutput.lineSequence().forEach { line ->
+        if (columns == null && line.contains("Host", ignoreCase = true) && !hopPattern.matches(line)) {
+            columns = line.trim().split(Regex("\\\\s+")).drop(1).map { columnFields[it.lowercase()] ?: "" }
+            return@forEach
+        }
+        val match = hopPattern.matchEntire(line) ?: return@forEach
+        val number = match.groupValues[1].toIntOrNull() ?: return@forEach
+        if (number !in 1..64 || !seen.add(number)) return@forEach
+        val tokens = match.groupValues[2].trim().split(Regex("\\\\s+")).toMutableList()
+        val numbers = mutableListOf<Double>()
+        while (tokens.isNotEmpty()) {
+            val tail = tokens.last()
+            val value = tail.removeSuffix("%").toDoubleOrNull()
+            if (value == null) break
+            numbers.add(0, value)
+            tokens.removeAt(tokens.lastIndex)
+        }
+        var asn = ""
+        tokens.firstOrNull()?.takeIf { it.startsWith("AS", true) }?.let {
+            asn = it
+            tokens.removeAt(0)
+        }
+        var ip = ""
+        tokens.lastOrNull()?.takeIf { it.startsWith("(") && it.endsWith(")") }?.let {
+            val candidate = it.removePrefix("(").removeSuffix(")")
+            if (isIpLiteral(candidate)) { ip = candidate; tokens.removeAt(tokens.lastIndex) }
+        }
+        val hostText = tokens.joinToString(" ").takeIf { it.isNotBlank() && it != "???" && !it.startsWith("(waiting", true) }.orEmpty()
+        val host = if (hostText.isNotBlank() && isIpLiteral(hostText)) { ip = ip.ifBlank { hostText }; "" } else hostText
+        val values = mutableMapOf<String, Double>()
+        columns?.let { header ->
+            val offset = header.size - numbers.size
+            numbers.forEachIndexed { index, value ->
+                val field = header.getOrNull(offset + index).orEmpty()
+                if (field.isNotBlank()) values[field] = value
+            }
+        }
+        hops += MtrHop(number, host, ip, asn, values["loss"], values["last"], values["avg"], values["worst"])
+    }
+    return hops
+}
+
 private object NetworkRepository {
     private const val IPIFY_V4 = "https://api.ipify.org?format=json"
     private const val IPIFY_DUAL = "https://api64.ipify.org?format=json"
@@ -3246,7 +3481,8 @@ private object NetworkRepository {
         val resolvers = listOf(
             "Cloudflare" to "https://cloudflare-dns.com/dns-query",
             "Google Public DNS" to "https://dns.google/resolve",
-            "Quad9" to "https://dns.quad9.net/dns-query"
+            "Quad9" to "https://dns.quad9.net/dns-query",
+            "DNS.SB" to "https://doh.dns.sb/dns-query?"
         )
         val remoteResults = resolvers.map { (name, endpoint) ->
             runCatching { resolveDnsOverHttps(name, endpoint, host, type) }
@@ -3276,6 +3512,41 @@ private object NetworkRepository {
             status = if (statusCode == 0) "正常" else "DNS $statusCode",
             error = if (statusCode == null) "未返回 DNS 状态" else null
         )
+    }
+
+    fun runGlobalMtr(target: String): MtrResult {
+        val locations = JSONArray().apply {
+            put(JSONObject().put("country", "US").put("limit", 1))
+            put(JSONObject().put("country", "DE").put("limit", 1))
+            put(JSONObject().put("country", "SG").put("limit", 1))
+        }
+        val request = JSONObject()
+            .put("target", target)
+            .put("type", "mtr")
+            .put("locations", locations)
+            .put("measurementOptions", JSONObject().put("port", 80).put("protocol", "ICMP"))
+        var response = JSONObject(postJson("https://api.globalping.io/v1/measurements", request.toString()))
+        val measurementId = response.stringOrBlank("id").ifBlank { throw IllegalStateException("Globalping 未返回 MTR 测量编号") }
+        for (attempt in 0 until 4) {
+            val state = response.stringOrBlank("status")
+            if (state.isNotBlank() && !state.equals("in-progress", ignoreCase = true)) break
+            Thread.sleep(1_200)
+            response = JSONObject(getText("https://api.globalping.io/v1/measurements/${URLEncoder.encode(measurementId, Charsets.UTF_8.name())}"))
+        }
+        val results = response.optJSONArray("results")
+        val probes = buildList {
+            if (results != null) {
+                for (index in 0 until results.length()) {
+                    val item = results.optJSONObject(index) ?: continue
+                    val probe = item.optJSONObject("probe")
+                    val result = item.optJSONObject("result")
+                    val location = listOf(probe?.stringOrBlank("city"), probe?.stringOrBlank("country")).filter { !it.isNullOrBlank() }.joinToString(", ").ifBlank { "位置未知" }
+                    val rawOutput = result?.stringOrBlank("rawOutput").orEmpty()
+                    add(MtrProbeResult(location, probe?.stringOrBlank("network").orEmpty(), probe?.stringOrBlank("asn").orEmpty(), result?.stringOrBlank("status").orEmpty().ifBlank { "未知" }, parseMtrOutput(rawOutput)))
+                }
+            }
+        }
+        return MtrResult(target, measurementId, response.stringOrBlank("status").ifBlank { "已创建" }, probes)
     }
 
     fun runGlobalPing(target: String): GlobalPingResult {
